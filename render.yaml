@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: smartxcrop
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: PLANT_ID_API_KEY
+        value: ccNvXCexVeQnAbqiUZJiOjvtajq93ihG2WCY174MmDYV4jvrVI
+      - key: CROP_HEALTH_API_KEY
+        value: AMOoErWMNmp8g0O2aOLubtnWv5LBxvbX93y13PC2W9yObCQKvt

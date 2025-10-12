@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SmartXCrop - Farmers Marketplace</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+</head>
+<body>
+    <!-- Authentication Screen -->
+    <div id="authScreen" class="auth-container">
+        <div class="auth-card">
+            <div class="app-logo">🌱</div>
+            <h1 class="app-title">SmartXCrop</h1>
+            <p class="app-subtitle">Connect Farmers & Buyers</p>
+            
+            <!-- Login Form -->
+            <div id="loginForm">
+                <div class="form-group">
+                    <input type="text" id="username" class="form-control" placeholder="Username" required>
+                </div>
+                <div class="form-group">
+                    <input type="password" id="password" class="form-control" placeholder="Password" required>
+                </div>
+                <button class="btn btn-primary" onclick="login()">Sign In</button>
+                <p class="auth-switch">
+                    Don't have an account? <a href="#" onclick="showSignup()">Sign Up</a>
+                </p>
+            </div>
+            
+            <!-- Signup Form -->
+            <div id="signupForm" class="hidden">
+                <div class="form-group">
+                    <input type="text" id="fullName" class="form-control" placeholder="Full Name" required>
+                </div>
+                <div class="form-group">
+                    <input type="number" id="age" class="form-control" placeholder="Age" min="18" max="100" required>
+                </div>
+                <div class="form-group">
+                    <input type="text" id="region" class="form-control" placeholder="Region/Province" required>
+                </div>
+                
+                <div class="user-type-selector">
+                    <div class="user-type-option" onclick="selectUserType(this, 'farmer')">
+                        <i class="fas fa-tractor"></i>
+                        <div>Farmer</div>
+                    </div>
+                    <div class="user-type-option" onclick="selectUserType(this, 'buyer')">
+                        <i class="fas fa-shopping-cart"></i>
+                        <div>Buyer</div>
+                    </div>
+                    <div class="user-type-option" onclick="selectUserType(this, 'both')">
+                        <i class="fas fa-exchange-alt"></i>
+                        <div>Both</div>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <input type="text" id="signupUsername" class="form-control" placeholder="Choose Username" required>
+                </div>
+                <div class="form-group">
+                    <input type="password" id="signupPassword" class="form-control" placeholder="Create Password" required>
+                </div>
+                
+                <div class="form-group">
+                    <label>Choose Avatar</label>
+                    <div class="avatar-preview" id="avatarPreview" style="width: 60px; height: 60px; border-radius: 50%; background: #f0f0f0; display: flex; align-items: center; justify-content: center; font-size: 24px; margin: 10px auto; cursor: pointer;" onclick="openAvatarSelection()">
+                        👤
+                    </div>
+                </div>
+                
+                <button class="btn btn-primary" onclick="signup()">Create Account</button>
+                <p class="auth-switch">
+                    Already have an account? <a href="#" onclick="showLogin()">Sign In</a>
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main App Screen -->
+    <div id="appScreen" class="app-container hidden">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="header-content">
+                <div class="header-left">
+                    <div class="header-avatar" id="mainProfileAvatar">👤</div>
+                    <div class="header-info">
+                        <h2 id="mainProfileName">User Name</h2>
+                        <p id="mainProfileDetails">Region • Age</p>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <button class="icon-button" onclick="openMyFarm()" title="My Farm">
+                        <i class="fas fa-tractor"></i>
+                    </button>
+                    <button class="icon-button" onclick="openPlantIdentification()" title="Plant ID">
+                        <i class="fas fa-seedling"></i>
+                    </button>
+                    <button class="icon-button" onclick="openDiseaseDetection()" title="Crop Health">
+                        <i class="fas fa-heartbeat"></i>
+                    </button>
+                    <button class="icon-button" onclick="showCart()" title="Cart">
+                        <i class="fas fa-shopping-cart"></i>
+                        <span class="cart-badge">0</span>
+                    </button>
+                    <button class="icon-button" onclick="logout()" title="Logout">
+                        <i class="fas fa-sign-out-alt"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Tab Navigation -->
+        <nav class="tab-navigation">
+            <div class="tab-buttons">
+                <button class="tab-button active" onclick="switchTab('feed')">
+                    <i class="fas fa-home"></i> Feed
+                </button>
+                <button class="tab-button" onclick="switchTab('map')">
+                    <i class="fas fa-map"></i> Map
+                </button>
+                <button class="tab-button" onclick="switchTab('profile')">
+                    <i class="fas fa-user"></i> Profile
+                </button>
+                <button class="tab-button" onclick="switchTab('agroInputs')">
+                    <i class="fas fa-tools"></i> Agro Inputs
+                </button>
+                <button class="tab-button" onclick="switchTab('messages')">
+                    <i class="fas fa-comments"></i> Messages
+                </button>
+            </div>
+        </nav>
+
+        <!-- Tab Contents -->
+        <main class="tab-content-container">
+            <!-- Feed Tab -->
+            <div id="feedTab" class="tab-content">
+                <div class="feed" id="productsFeed">
+                    <!-- Products will be loaded here -->
+                </div>
+            </div>
+
+            <!-- Map Tab -->
+            <div id="mapTab" class="tab-content hidden">
+                <div id="realMap" style="height: 400px;"></div>
+            </div>
+
+            <!-- Profile Tab -->
+            <div id="profileTab" class="tab-content hidden">
+                <div class="profile-header">
+                    <div class="profile-avatar-large" id="profileAvatarLarge">
+                        <!-- Avatar will be set by JavaScript -->
+                    </div>
+                    <h1 class="profile-name" id="profileName">User Name</h1>
+                    <p class="profile-details" id="profileDetails">Region • Age</p>
+                    <span class="profile-type" id="profileType">User Type</span>
+                    
+                    <div class="profile-actions">
+                        <button class="btn-small btn-outline" onclick="showAddProductForm()">
+                            <i class="fas fa-plus"></i> Add Product
+                        </button>
+                        <button class="btn-small btn-outline" onclick="openEditProfile()">
+                            <i class="fas fa-user-edit"></i> Edit Profile
+                        </button>
+                    </div>
+                </div>
+                
+                <h3 style="margin-bottom: 15px;">My Products</h3>
+                <div class="my-products-grid">
+                    <!-- User's products will be loaded here -->
+                </div>
+            </div>
+
+            <!-- Agro Inputs Tab -->
+            <div id="agroInputsTab" class="tab-content hidden">
+                <!-- Agro inputs will load here -->
+            </div>
+
+            <!-- Messages Tab -->
+            <div id="messagesTab" class="tab-content hidden">
+                <!-- Messages will load here -->
+            </div>
+        </main>
+    </div>
+
+    <!-- Hidden file inputs -->
+    <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display: none;">
+    <input type="file" id="galleryInput" accept="image/*" style="display: none;">
+
+   
+    <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

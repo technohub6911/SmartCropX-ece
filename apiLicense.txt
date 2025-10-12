@@ -1,0 +1,3 @@
+plant.ID is ccNvXCexVeQnAbqiUZJiOjvtajq93ihG2WCY174MmDYV4jvrVI
+crop.health is AMOoErWMNmp8g0O2aOLubtnWv5LBxvbX93y13PC2W9yObCQKvt
+PlantNet API 2b10bZ1YZjwCMZ7GVEL5ixmbpO
