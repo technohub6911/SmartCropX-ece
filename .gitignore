@@ -1,0 +1,24 @@
+notepad .gitignore 
+# Windows system files
+AppData/
+Application Data/
+Cookies/
+Local Settings/
+My Documents/
+NetHood/
+PrintHood/
+Recent/
+SendTo/
+Start Menu/
+Templates/
+*.tmp
+*.temp
+Thumbs.db
+
+# Node.js (if you have any)
+node_modules/
+npm-debug.log*
+
+# Environment variables
+.env
+.env.local

@@ -1,0 +1,37 @@
+-Edit product wont work only put "product editing feature will open here"
+-I thought i have real ai but when i try the ai it just keep repeating the results
+-Ai tab wont open the camera
+-edit profile doesn't have camera feature for putting profile picture 
+-Message in feed tab only put "messaging feature would open chat with seller"
+-No camera feature for adding product 
+-should put a picture of product so it can seen in feed
+-Online tab is blank
+-Agro input tabs doesn't have buy option link it with real shops or link it if there are farmer selling it
+-Placing order should reflect on the seller's stock in feed 
+- use real map (OpenStreetMap)
+- map should show the location of sellers 
+- put feature that will ask farmer about their farm (ask the type of crop, and let ai compute how long will it take to be harvest, when the time comes app should ask after if he's harvesting of harvest complete) (should show it on map when user click on his location and click "farmer status").
+
+
+UPDATE:2.1
+-also why the map using wrong location it should use the device location and put user's location when signing in put the user's device location as default address unless he edit it
+-Add more selections for seeds/seedlings and Fertilizers&soil (make it sectioned)
+-in "edit profile and picture direct the user to user's gallery or camera
+- Online tab is still empty (put list of online users)
+- the ai helper "Plant Identification" and "Disease Detection" only says "Plant identification feature coming soon!" (should use real ai using user's camera and gallery)
+- the ask ai is gone (put it back using real Ai)
+- make shopping cart and notification icon usable
+- overall make it real and fully functioning webapp
+
+UPDATE:2.2
+- Messages other user wont open only displaying "Opening chat with Demo User..."
+-i can't see other user's new added products whenever on feed tab or "view products button"
+- the feed tab resets when you refresh the app or web
+- disease detection wont upload image
+- checkout button wont proceed (should send message to the seller, have automatic response from app "is transaction successful?" with option "not yet" "No" "yes" if successful congrats them then update the stocks of the seller, in no ask them if "you want more time" or "cancel" if cancel remove the ongoing transaction
+- script.js:613 Uncaught TypeError: Cannot read properties of undefined (reading 'pricePerKg')
+    at script.js:613:48
+    at Array.map (<anonymous>)
+    at showCart (script.js:612:20)
+    at HTMLDivElement.onclick (VM1030 :1:1)
+-
