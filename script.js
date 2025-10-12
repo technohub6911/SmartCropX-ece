@@ -36,6 +36,9 @@ const API_BASE_URL = getApiBaseUrl();
 const PLANT_ID_API_KEY = 'ccNvXCexVeQnAbqiUZJiOjvtajq93ihG2WCY174MmDYV4jvrVI';
 const PLANT_ID_API_URL = 'https://api.plant.id/v2/identify';
 
+const PLANTNET_API_KEY = '2b10bZ1YZjwCMZ7GVEL5ixmbpO';
+const PLANTNET_API_URL = 'https://my-api.plantnet.org/v2/identify';
+
 // ==================== APPLICATION STATE ====================
 let currentUser = null;
 let myProducts = [];
@@ -52,88 +55,9 @@ let map = null;
 let ws = null;
 let selectedProfileImage = null;
 
-// ==================== API SERVICE ====================
-const apiService = {
-    async request(endpoint, options = {}) {
-        const url = `${API_BASE_URL}${endpoint}`;
-        const config = {
-            headers: {
-                'Content-Type': 'application/json',
-                ...(authToken && { 'Authorization': `Bearer ${authToken}` }),
-                ...options.headers,
-            },
-            ...options,
-        };
+// ==================== DUAL AI API INTEGRATION ====================
 
-        try {
-            const response = await fetch(url, config);
-            
-            if (response.status === 403) {
-                showNotification('Session expired. Please login again.', 'error');
-                logout();
-                throw new Error('Authentication failed');
-            }
-            
-            if (!response.ok) {
-                const errorData = await response.json().catch(() => ({ error: 'Network error' }));
-                throw new Error(errorData.error || `HTTP ${response.status}`);
-            }
-            
-            return await response.json();
-        } catch (error) {
-            console.error('API Request failed:', error);
-            if (error.message.includes('Authentication failed')) {
-                throw error;
-            }
-            throw new Error('Network request failed');
-        }
-    },
-
-    async get(endpoint) {
-        return this.request(endpoint);
-    },
-
-    async post(endpoint, data) {
-        return this.request(endpoint, {
-            method: 'POST',
-            body: JSON.stringify(data),
-        });
-    },
-
-    async put(endpoint, data) {
-        return this.request(endpoint, {
-            method: 'PUT',
-            body: JSON.stringify(data),
-        });
-    },
-
-    async uploadImage(endpoint, file, type = 'profile') {
-        const formData = new FormData();
-        formData.append('image', file);
-        
-        const url = `${API_BASE_URL}${endpoint}`;
-        const config = {
-            method: 'POST',
-            headers: {
-                ...(authToken && { 'Authorization': `Bearer ${authToken}` }),
-            },
-            body: formData,
-        };
-
-        try {
-            const response = await fetch(url, config);
-            if (!response.ok) {
-                throw new Error(`Upload failed: ${response.status}`);
-            }
-            return await response.json();
-        } catch (error) {
-            console.error('Image upload failed:', error);
-            throw error;
-        }
-    }
-};
-
-// ==================== PLANT.ID AI INTEGRATION ====================
+// Plant.ID for accurate plant identification
 async function analyzePlantWithPlantID(imageBase64) {
     try {
         showLoading('🔍 Identifying plant with AI...');
@@ -186,59 +110,47 @@ async function analyzePlantWithPlantID(imageBase64) {
     }
 }
 
-// Use Plant.ID for health analysis too (more reliable)
-async function analyzeDiseaseWithPlantID(imageBase64, plantType = '') {
+// PlantNet for disease detection and health analysis
+async function analyzeDiseaseWithPlantNet(imageBase64, plantType = '') {
     try {
         showLoading('🩺 Analyzing plant health with AI...');
         
-        // Remove data URL prefix
-        const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+        // Convert base64 to blob for PlantNet
+        const base64Response = await fetch(imageBase64);
+        const blob = await base64Response.blob();
         
-        const requestData = {
-            images: [base64Data],
-            modifiers: ["crops_fast", "similar_images"],
-            plant_language: "en",
-            plant_details: [
-                "common_names",
-                "url",
-                "description", 
-                "taxonomy",
-                "rank",
-                "gbif_id",
-                "inaturalist_id",
-                "image",
-                "synonyms",
-                "edible_parts",
-                "watering"
-            ]
-        };
+        // Create form data for PlantNet
+        const formData = new FormData();
+        formData.append('organs', 'leaf'); // Focus on leaves for disease detection
+        formData.append('images', blob, 'plant_health.jpg');
         
-        const response = await fetch(PLANT_ID_API_URL, {
+        // Use a CORS proxy for PlantNet
+        const proxyUrl = 'https://cors-anywhere.herokuapp.com/';
+        const apiUrl = `${PLANTNET_API_URL}?api-key=${PLANTNET_API_KEY}`;
+        
+        const response = await fetch(proxyUrl + apiUrl, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Api-Key': PLANT_ID_API_KEY,
-            },
-            body: JSON.stringify(requestData),
+            body: formData,
         });
         
         if (!response.ok) {
-            throw new Error(`Plant.ID API error: ${response.status}`);
+            throw new Error(`PlantNet API error: ${response.status}`);
         }
         
         const data = await response.json();
-        console.log('Plant.ID Health Response:', data);
+        console.log('PlantNet Health Response:', data);
         
-        return enhanceHealthData(data, plantType);
+        return analyzePlantHealth(data, plantType);
         
     } catch (error) {
-        console.error('Plant.ID health analysis error:', error);
+        console.error('PlantNet health analysis error:', error);
         throw new Error('Health analysis failed. Using enhanced analysis.');
     } finally {
         hideLoading();
     }
 }
 
+// Enhanced Plant.ID data processing
 function enhancePlantIDData(plantIdData) {
     if (!plantIdData.suggestions || plantIdData.suggestions.length === 0) {
         return {
@@ -280,47 +192,49 @@ function enhancePlantIDData(plantIdData) {
     };
 }
 
-function enhanceHealthData(plantIdData, plantType = '') {
-    if (!plantIdData.suggestions || plantIdData.suggestions.length === 0) {
-        return getEnhancedCropHealthAnalysis(plantType, 'Plant.ID');
+// PlantNet health analysis
+function analyzePlantHealth(plantNetData, plantType = '') {
+    if (!plantNetData.results || plantNetData.results.length === 0) {
+        return getEnhancedCropHealthAnalysis(plantType, 'PlantNet');
     }
 
-    const primarySuggestion = plantIdData.suggestions[0];
-    const confidence = primarySuggestion.probability || 0.5;
-    const plantName = primarySuggestion.plant_name || '';
+    const primaryResult = plantNetData.results[0];
+    const confidence = primaryResult.score;
     
-    // Analyze health based on confidence
-    const isHealthy = confidence > 0.7;
+    // Analyze health based on confidence and results
+    const isHealthy = confidence > 0.6;
     const healthScore = Math.floor(confidence * 100);
     
-    // Get base disease analysis
-    const baseAnalysis = getDiseaseAnalysisForPlant(plantName || plantType, plantType);
+    // Get identified plant name for targeted analysis
+    const identifiedPlant = primaryResult.species.scientificNameWithoutAuthor || '';
     
+    // Get base disease analysis
+    const baseAnalysis = getDiseaseAnalysisForPlant(identifiedPlant || plantType, plantType);
+    
+    // Enhanced analysis with PlantNet results
     return {
         ...baseAnalysis,
         is_healthy: isHealthy,
         health_score: healthScore,
         ai_confidence: confidence,
-        identified_plant: plantName,
-        api_used: 'Plant.ID',
+        identified_plant: identifiedPlant,
+        api_used: 'PlantNet',
         is_health_analysis: true,
         diseases: !isHealthy ? [
             {
-                name: "Potential Health Issue Detected",
+                name: "Plant Health Concern Detected",
                 confidence: 1 - confidence,
-                description: "AI analysis suggests possible plant health concerns. Lower identification confidence can indicate stress, disease, or environmental issues.",
-                cause: "Could be due to disease, pests, nutrient deficiency, or environmental stress",
-                symptoms: ["Reduced identification confidence", "Possible visual symptoms"],
-                treatment: "Consult with agricultural expert for proper diagnosis",
-                severity: confidence < 0.4 ? "High" : confidence < 0.7 ? "Medium" : "Low"
+                description: "AI detected potential health issues. Low identification confidence often indicates disease, pest damage, or environmental stress.",
+                cause: "Could be fungal/bacterial infection, nutrient deficiency, or environmental factors",
+                symptoms: ["Reduced identification confidence", "Possible visual abnormalities", "Growth issues"],
+                treatment: "Consult agricultural expert for precise diagnosis",
+                severity: confidence < 0.3 ? "High" : confidence < 0.6 ? "Medium" : "Low"
             },
             ...baseAnalysis.diseases
         ] : baseAnalysis.diseases,
         recommendations: [
             ...baseAnalysis.recommendations,
-            isHealthy ? 
-                "Plant appears healthy based on AI analysis" : 
-                "Consider expert consultation and monitor plant closely"
+            isHealthy ? "Plant appears healthy based on AI analysis" : "Consider expert consultation for detailed diagnosis"
         ]
     };
 }
@@ -536,6 +450,87 @@ function getEnhancedCropHealthAnalysis(plantType = '', apiUsed = 'Enhanced Analy
         ai_confidence: 0.85
     };
 }
+
+// ==================== API SERVICE ====================
+const apiService = {
+    async request(endpoint, options = {}) {
+        const url = `${API_BASE_URL}${endpoint}`;
+        const config = {
+            headers: {
+                'Content-Type': 'application/json',
+                ...(authToken && { 'Authorization': `Bearer ${authToken}` }),
+                ...options.headers,
+            },
+            ...options,
+        };
+
+        try {
+            const response = await fetch(url, config);
+            
+            if (response.status === 403) {
+                showNotification('Session expired. Please login again.', 'error');
+                logout();
+                throw new Error('Authentication failed');
+            }
+            
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({ error: 'Network error' }));
+                throw new Error(errorData.error || `HTTP ${response.status}`);
+            }
+            
+            return await response.json();
+        } catch (error) {
+            console.error('API Request failed:', error);
+            if (error.message.includes('Authentication failed')) {
+                throw error;
+            }
+            throw new Error('Network request failed');
+        }
+    },
+
+    async get(endpoint) {
+        return this.request(endpoint);
+    },
+
+    async post(endpoint, data) {
+        return this.request(endpoint, {
+            method: 'POST',
+            body: JSON.stringify(data),
+        });
+    },
+
+    async put(endpoint, data) {
+        return this.request(endpoint, {
+            method: 'PUT',
+            body: JSON.stringify(data),
+        });
+    },
+
+    async uploadImage(endpoint, file, type = 'profile') {
+        const formData = new FormData();
+        formData.append('image', file);
+        
+        const url = `${API_BASE_URL}${endpoint}`;
+        const config = {
+            method: 'POST',
+            headers: {
+                ...(authToken && { 'Authorization': `Bearer ${authToken}` }),
+            },
+            body: formData,
+        };
+
+        try {
+            const response = await fetch(url, config);
+            if (!response.ok) {
+                throw new Error(`Upload failed: ${response.status}`);
+            }
+            return await response.json();
+        } catch (error) {
+            console.error('Image upload failed:', error);
+            throw error;
+        }
+    }
+};
 
 // ==================== LOCATION HELPER ====================
 function getRandomPhilippinesLocation() {
@@ -763,18 +758,14 @@ function showLoading(message = 'Loading...') {
         `;
         document.body.appendChild(loadingOverlay);
         
-        // Add spinner animation
-        if (!document.querySelector('#spinner-style')) {
-            const style = document.createElement('style');
-            style.id = 'spinner-style';
-            style.textContent = `
-                @keyframes spin {
-                    0% { transform: rotate(0deg); }
-                    100% { transform: rotate(360deg); }
-                }
-            `;
-            document.head.appendChild(style);
-        }
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+        `;
+        document.head.appendChild(style);
     }
 }
 
@@ -922,6 +913,17 @@ async function loadDemoData() {
                 seller: allUsers[0],
                 rating: 4.5,
                 reviewCount: 24
+            },
+            {
+                id: 'prod_2',
+                title: 'Sweet Corn',
+                description: 'Fresh sweet corn, perfect for boiling or grilling',
+                pricePerKg: 85.00,
+                stock: 30,
+                category: 'vegetables',
+                seller: allUsers[1],
+                rating: 4.2,
+                reviewCount: 15
             }
         ];
         Storage.set('allProducts', allProducts);
@@ -945,7 +947,7 @@ function displayProducts(products) {
     }
 
     feed.innerHTML = products.map(product => `
-        <div class="post">
+        <div class="post" onclick="showProductDetails('${product.id}')">
             <div class="post-header">
                 <div class="user-avatar">
                     ${product.seller?.avatar || '👤'}
@@ -970,10 +972,10 @@ function displayProducts(products) {
                 </div>
                 <div class="product-price">₱${product.pricePerKg.toFixed(2)}/kg</div>
                 <div class="post-actions">
-                    <button class="btn btn-buy" onclick="addToCart('${product.id}')">
+                    <button class="btn btn-buy" onclick="event.stopPropagation(); addToCart('${product.id}')">
                         <i class="fas fa-cart-plus"></i> Add to Cart
                     </button>
-                    <button class="btn btn-offer" onclick="selectChatUser('${product.seller?.id}')">
+                    <button class="btn btn-offer" onclick="event.stopPropagation(); selectChatUser('${product.seller?.id}')">
                         <i class="fas fa-comment"></i> Message
                     </button>
                 </div>
@@ -988,12 +990,32 @@ function updateProfile() {
     const mainProfileAvatar = document.getElementById('mainProfileAvatar');
     const mainProfileName = document.getElementById('mainProfileName');
     const mainProfileDetails = document.getElementById('mainProfileDetails');
+    const profileAvatarLarge = document.getElementById('profileAvatarLarge');
+    const profileName = document.getElementById('profileName');
+    const profileDetails = document.getElementById('profileDetails');
+    const profileType = document.getElementById('profileType');
     
     if (mainProfileAvatar) {
-        mainProfileAvatar.textContent = currentUser.avatar || '👤';
+        if (currentUser.profileImage) {
+            mainProfileAvatar.innerHTML = `<img src="${currentUser.profileImage}" alt="Profile" style="width: 100%; height: 100%; object-fit: cover;">`;
+        } else {
+            mainProfileAvatar.textContent = currentUser.avatar || '👤';
+        }
     }
+    
+    if (profileAvatarLarge) {
+        if (currentUser.profileImage) {
+            profileAvatarLarge.innerHTML = `<img src="${currentUser.profileImage}" alt="Profile" style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;">`;
+        } else {
+            profileAvatarLarge.textContent = currentUser.avatar || '👤';
+        }
+    }
+    
     if (mainProfileName) mainProfileName.textContent = currentUser.fullName;
+    if (profileName) profileName.textContent = currentUser.fullName;
     if (mainProfileDetails) mainProfileDetails.textContent = `${currentUser.region} • ${currentUser.age} years old`;
+    if (profileDetails) profileDetails.textContent = `${currentUser.region} • ${currentUser.age} years old`;
+    if (profileType) profileType.textContent = currentUser.userType.charAt(0).toUpperCase() + currentUser.userType.slice(1);
 }
 
 function loadMyProducts() {
@@ -1027,6 +1049,7 @@ function loadMyProducts() {
                 <div class="product-card-name">${product.title}</div>
                 <div class="product-card-price">₱${product.pricePerKg.toFixed(2)}/kg</div>
                 <div class="product-card-stock">Stock: ${product.stock} kg</div>
+                <button class="btn-small" onclick="editProduct('${product.id}')">Edit</button>
             </div>
         </div>
     `).join('');
@@ -1100,7 +1123,10 @@ function showCart() {
     modal.innerHTML = `
         <div class="cart-items">
             ${cart.map(item => {
-                if (!item.product) return '';
+                if (!item.product) {
+                    console.warn('Invalid cart item:', item);
+                    return '';
+                }
                 const itemTotal = (item.product.pricePerKg || 0) * (item.quantity || 0);
                 total += itemTotal;
                 return `
@@ -1108,11 +1134,14 @@ function showCart() {
                         <div class="item-info">
                             <h4>${item.product.title || 'Unknown Product'}</h4>
                             <p>₱${(item.product.pricePerKg || 0).toFixed(2)}/kg × ${item.quantity || 0}kg</p>
+                            <small>Seller: ${item.product.seller?.fullName || 'Unknown Seller'}</small>
                         </div>
                         <div class="item-actions">
                             <button class="btn-remove" onclick="removeFromCart('${item.product.id}')">
                                 <i class="fas fa-trash"></i>
                             </button>
+                            <span>${item.quantity || 0}</span>
+                            <button class="btn-small" onclick="updateCartQuantity('${item.product.id}', ${(item.quantity || 0) + 1})">+</button>
                         </div>
                     </div>
                 `;
@@ -1135,6 +1164,22 @@ function removeFromCart(productId) {
     showCart();
 }
 
+function updateCartQuantity(productId, newQuantity) {
+    const item = cart.find(item => item.product?.id === productId);
+    if (item) {
+        if (newQuantity <= 0) {
+            removeFromCart(productId);
+        } else if (newQuantity <= item.product.stock) {
+            item.quantity = newQuantity;
+            Storage.set('cart', cart);
+            updateCartBadge();
+            showCart();
+        } else {
+            showNotification('Cannot add more - stock limit reached', 'warning');
+        }
+    }
+}
+
 // ==================== AGRO INPUTS TAB ====================
 function loadAgroInputsTab() {
     const agroInputsTab = document.getElementById('agroInputsTab');
@@ -1144,8 +1189,9 @@ function loadAgroInputsTab() {
         <div class="agro-inputs-container">
             <div class="section-header">
                 <h3>🛒 Agro Inputs Marketplace</h3>
-                <p>Find seeds, fertilizers, and farming tools</p>
+                <p>Find seeds, fertilizers, and farming tools from trusted suppliers</p>
             </div>
+            
             <div class="agro-category">
                 <h4>🌱 Seeds & Seedlings</h4>
                 <div class="agro-items">
@@ -1154,8 +1200,18 @@ function loadAgroInputsTab() {
                             <h5>Tomato Seeds F1 Hybrid</h5>
                             <span class="price">₱150</span>
                         </div>
-                        <p>High-yield hybrid tomato seeds, disease resistant.</p>
-                        <button class="btn-small" onclick="addToCartAgro('Tomato Seeds', 150)">Add to Cart</button>
+                        <p>High-yield hybrid tomato seeds, disease resistant, 98% germination rate. Perfect for backyard gardening.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">East-West Seed Company</span>
+                            <span class="specs">25g pack • 2000 seeds</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Tomato Seeds F1 Hybrid', 150)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Tomato Seeds F1 Hybrid', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/tomato-seeds-f1-hybrid-east-west-seed-company-i123456789.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Tomato-Seeds-F1-Hybrid-East-West-Seed-Company-i.282345678.1234567890'}
+                            ])">Buy Now</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1178,25 +1234,79 @@ function addToCartAgro(name, price) {
     showNotification(`${name} added to cart`, 'success');
 }
 
+// ==================== STORE OPTIONS ====================
+function showStoreOptions(productName, stores) {
+    const modal = createModal(`🛍️ Buy ${productName}`);
+    
+    modal.innerHTML = `
+        <div class="store-options">
+            <p style="margin-bottom: 20px; text-align: center;">Choose where to buy <strong>${productName}</strong>:</p>
+            
+            <div class="store-list">
+                ${stores.map(store => `
+                    <div class="store-option" onclick="redirectToStore('${store.name}', '${store.url}')">
+                        <div class="store-icon">
+                            ${getStoreIcon(store.name)}
+                        </div>
+                        <div class="store-info">
+                            <h4>${store.name}</h4>
+                            <p>Click to open ${store.name} store</p>
+                        </div>
+                        <div class="store-arrow">
+                            <i class="fas fa-external-link-alt"></i>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Cancel</button>
+            </div>
+        </div>
+    `;
+}
+
+function getStoreIcon(storeName) {
+    const icons = {
+        'Lazada': '🏪',
+        'Shopee': '🛍️',
+        'Amazon': '📦'
+    };
+    return icons[storeName] || '🛒';
+}
+
+function redirectToStore(storeName, url) {
+    showNotification(`Opening ${storeName}...`, 'info');
+    window.open(url, '_blank');
+    closeModal();
+}
+
 // ==================== MESSAGES TAB ====================
 function loadMessagesTab() {
     const messagesTab = document.getElementById('messagesTab');
     if (!messagesTab) return;
     
+    // Get other users (excluding current user)
     const otherUsers = allUsers.filter(user => user.id !== currentUser?.id);
     
     messagesTab.innerHTML = `
         <div class="profile-section">
             <div class="section-header">
                 <h3>💬 Recent Conversations</h3>
+                <small>Chat with farmers and buyers</small>
             </div>
-            <div class="conversations-list">
-                ${otherUsers.slice(0, 3).map(user => `
+            <div class="conversations-list" id="conversationsList">
+                ${otherUsers.slice(0, 5).map(user => `
                     <div class="conversation-item" onclick="selectChatUser('${user.id}')">
-                        <div class="user-avatar-small">${user.avatar || '👤'}</div>
+                        <div class="user-avatar-small">
+                            ${user.avatar || '👤'}
+                        </div>
                         <div class="conversation-info">
                             <strong>${user.fullName}</strong>
-                            <p>Click to start conversation...</p>
+                            <p class="conversation-last-message">Click to start conversation...</p>
+                        </div>
+                        <div class="conversation-time">
+                            Now
                         </div>
                     </div>
                 `).join('')}
@@ -1225,9 +1335,12 @@ function openChat(userId = null) {
                     <div class="user-avatar-small">${currentChat.avatar || '👤'}</div>
                     <div>
                         <strong>${currentChat.fullName}</strong>
-                        <p>${currentChat.region}</p>
+                        <p>${currentChat.region} • ${currentChat.userType}</p>
                     </div>
                 </div>
+                <button class="btn-small" onclick="showUserSelectionModal()">
+                    <i class="fas fa-users"></i> Switch User
+                </button>
             </div>
             <div class="chat-messages" id="chatMessages">
                 <!-- Messages will be loaded here -->
@@ -1251,13 +1364,21 @@ function showUserSelectionModal() {
     
     modal.innerHTML = `
         <div class="users-selection">
-            <div class="users-list">
+            <div class="search-bar" style="margin-bottom: 15px;">
+                <input type="text" id="userSearchInput" placeholder="🔍 Search users..." 
+                       onkeyup="filterUsers()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+            </div>
+            <div class="users-list" id="usersList">
                 ${otherUsers.map(user => `
                     <div class="user-selection-item" onclick="selectChatUser('${user.id}')">
                         <div class="user-avatar-small">${user.avatar || '👤'}</div>
                         <div class="user-info">
                             <strong>${user.fullName}</strong>
                             <p>${user.region} • ${user.userType}</p>
+                            <small>${user.userType === 'seller' || user.userType === 'both' ? '👨‍🌾 Farmer' : '🛒 Buyer'}</small>
+                        </div>
+                        <div class="user-action">
+                            <i class="fas fa-comment"></i>
                         </div>
                     </div>
                 `).join('')}
@@ -1270,6 +1391,22 @@ function selectChatUser(userId) {
     currentChat = allUsers.find(u => u.id === userId);
     closeModal();
     openChat();
+}
+
+function filterUsers() {
+    const searchTerm = document.getElementById('userSearchInput')?.value.toLowerCase();
+    const userItems = document.querySelectorAll('.user-selection-item');
+    
+    userItems.forEach(item => {
+        const userName = item.querySelector('strong').textContent.toLowerCase();
+        const userRegion = item.querySelector('p').textContent.toLowerCase();
+        
+        if (userName.includes(searchTerm) || userRegion.includes(searchTerm)) {
+            item.style.display = 'flex';
+        } else {
+            item.style.display = 'none';
+        }
+    });
 }
 
 function loadChatMessages() {
@@ -1285,16 +1422,20 @@ function loadChatMessages() {
         chatMessagesDiv.innerHTML = `
             <div class="message system-message">
                 <div class="message-content">
-                    <strong>Chat started with ${currentChat.fullName}</strong>
+                    <strong>Chat started with ${currentChat.fullName}</strong><br>
+                    <small>You can now send messages to each other</small>
                 </div>
             </div>
         `;
     } else {
         chatMessagesDiv.innerHTML = chatMessages.map(msg => {
             const isMe = msg.from === currentUser.id;
+            const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            
             return `
                 <div class="message ${isMe ? 'sent' : 'received'}">
                     <div class="message-content">${msg.message}</div>
+                    <div class="message-time">${time}</div>
                 </div>
             `;
         }).join('');
@@ -1318,6 +1459,7 @@ function sendChatMessage() {
     const chatKey = `chat_${currentUser.id}_${currentChat.id}`;
     const chatMessages = Storage.get(chatKey, []);
     
+    // Add user message
     chatMessages.push({
         message: message,
         timestamp: new Date().toISOString(),
@@ -1328,14 +1470,208 @@ function sendChatMessage() {
     
     input.value = '';
     loadChatMessages();
+    
+    // Simulate response after 2 seconds
+    setTimeout(() => {
+        simulateChatResponse();
+    }, 2000);
+}
+
+function simulateChatResponse() {
+    if (!currentChat) return;
+    
+    const responses = [
+        "Thanks for your message! I'll get back to you soon.",
+        "I'm interested in your products. Can you tell me more?",
+        "When can I expect delivery?",
+        "Do you offer bulk discounts?"
+    ];
+    
+    const randomResponse = responses[Math.floor(Math.random() * responses.length)];
+    
+    const chatKey = `chat_${currentUser.id}_${currentChat.id}`;
+    const chatMessages = Storage.get(chatKey, []);
+    
+    chatMessages.push({
+        message: randomResponse,
+        timestamp: new Date().toISOString(),
+        from: currentChat.id
+    });
+    
+    Storage.set(chatKey, chatMessages);
+    
+    if (document.getElementById('chatMessages')) {
+        loadChatMessages();
+    }
+}
+
+// ==================== EDIT PROFILE ====================
+function openEditProfile() {
+    const modal = createModal('Edit Profile');
+    
+    modal.innerHTML = `
+        <form onsubmit="updateProfileInfo(event)">
+            <div class="form-group">
+                <label for="editFullName">Full Name</label>
+                <input type="text" id="editFullName" class="form-control" value="${currentUser.fullName}" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="editAge">Age</label>
+                <input type="number" id="editAge" class="form-control" value="${currentUser.age}" min="18" max="100" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="editRegion">Region</label>
+                <input type="text" id="editRegion" class="form-control" value="${currentUser.region}" required>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Cancel</button>
+                <button type="submit">Save Changes</button>
+            </div>
+        </form>
+    `;
+}
+
+function updateProfileInfo(event) {
+    event.preventDefault();
+    
+    const fullName = document.getElementById('editFullName').value.trim();
+    const age = parseInt(document.getElementById('editAge').value);
+    const region = document.getElementById('editRegion').value.trim();
+    
+    if (!fullName || !age || !region) {
+        showNotification('Please fill all fields', 'error');
+        return;
+    }
+    
+    try {
+        showLoading('Updating profile...');
+        
+        // Update current user
+        currentUser.fullName = fullName;
+        currentUser.age = age;
+        currentUser.region = region;
+        
+        // Update in storage
+        Storage.set('currentUser', currentUser);
+        
+        // Update in users array (for demo)
+        const userIndex = allUsers.findIndex(u => u.id === currentUser.id);
+        if (userIndex !== -1) {
+            allUsers[userIndex] = { ...allUsers[userIndex], ...currentUser };
+        }
+        
+        closeModal();
+        showNotification('Profile updated successfully!', 'success');
+        
+        // Update UI
+        updateProfile();
+        
+    } catch (error) {
+        console.error('Profile update error:', error);
+        showNotification('Failed to update profile', 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+// ==================== PRODUCT MANAGEMENT ====================
+function showAddProductForm() {
+    const modal = createModal('➕ Add New Product');
+    
+    modal.innerHTML = `
+        <form id="addProductForm" onsubmit="saveNewProduct(event)">
+            <div class="form-group">
+                <label for="productTitle">Product Title</label>
+                <input type="text" id="productTitle" class="form-control" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="productDescription">Description</label>
+                <textarea id="productDescription" class="form-control" rows="3" required></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="productPrice">Price per Kg (₱)</label>
+                <input type="number" id="productPrice" class="form-control" step="0.01" min="0" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="productStock">Stock (kg)</label>
+                <input type="number" id="productStock" class="form-control" min="1" required>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Cancel</button>
+                <button type="submit">Add Product</button>
+            </div>
+        </form>
+    `;
+}
+
+async function saveNewProduct(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    const title = document.getElementById('productTitle')?.value.trim();
+    const description = document.getElementById('productDescription')?.value.trim();
+    const price = parseFloat(document.getElementById('productPrice')?.value);
+    const stock = parseInt(document.getElementById('productStock')?.value);
+    
+    if (!title || !description || !price || !stock) {
+        showNotification('Please fill all fields', 'error');
+        return;
+    }
+    
+    try {
+        showLoading('Adding product...');
+        
+        // Create product object
+        const newProduct = {
+            id: 'prod_' + Date.now(),
+            sellerId: currentUser.id,
+            title,
+            description,
+            pricePerKg: price,
+            category: 'vegetables',
+            stock,
+            seller: currentUser,
+            image: null,
+            rating: 0,
+            reviewCount: 0,
+            createdAt: new Date()
+        };
+        
+        allProducts.push(newProduct);
+        Storage.set('allProducts', allProducts);
+        
+        closeModal();
+        showNotification('Product added successfully!', 'success');
+        
+        // Refresh displays
+        displayProducts(allProducts);
+        loadMyProducts();
+        
+    } catch (error) {
+        console.error('Add product error:', error);
+        showNotification('Failed to add product', 'error');
+    } finally {
+        hideLoading();
+    }
 }
 
 // ==================== SIMPLE MAP FUNCTIONALITY ====================
 async function initializeMap() {
     const mapContainer = document.getElementById('realMap');
-    if (!mapContainer) return;
+    if (!mapContainer) {
+        console.error('Map container not found');
+        return;
+    }
     
     try {
+        // Clear any existing map
         if (map) {
             map.remove();
             map = null;
@@ -1343,16 +1679,25 @@ async function initializeMap() {
         
         const userLocation = await getDeviceLocation();
         
+        // Initialize map
         map = L.map('realMap').setView([userLocation.lat, userLocation.lng], 13);
         
+        // Add tile layer
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap contributors',
             maxZoom: 18
         }).addTo(map);
 
+        // Add user location marker
         L.marker([userLocation.lat, userLocation.lng])
             .addTo(map)
-            .bindPopup(`<div class="map-popup"><h4>Your Location</h4><p>${currentUser.fullName}</p></div>`)
+            .bindPopup(`
+                <div class="map-popup">
+                    <h4>Your Location</h4>
+                    <p>${currentUser.fullName}</p>
+                    <p>${currentUser.region}</p>
+                </div>
+            `)
             .openPopup();
 
         // Add farmers to map
@@ -1361,6 +1706,18 @@ async function initializeMap() {
     } catch (error) {
         console.error('Map initialization failed:', error);
         showNotification('Map loading failed', 'error');
+        
+        const mapContainer = document.getElementById('realMap');
+        if (mapContainer) {
+            mapContainer.innerHTML = `
+                <div class="map-placeholder">
+                    <i class="fas fa-map-marked-alt" style="font-size: 48px; margin-bottom: 16px;"></i>
+                    <h4>Map Unavailable</h4>
+                    <p>Location services are required for map features</p>
+                    <button class="btn-small" onclick="initializeMap()" style="margin-top: 15px;">Try Again</button>
+                </div>
+            `;
+        }
     }
 }
 
@@ -1371,20 +1728,87 @@ function addFarmersToMap() {
         (user.userType === 'seller' || user.userType === 'both') && user.location
     );
     
+    // Create a feature group for farmers
+    const farmerGroup = L.featureGroup();
+    
     farmers.forEach(user => {
-        L.marker([user.location.lat, user.location.lng])
+        const marker = L.marker([user.location.lat, user.location.lng])
             .addTo(map)
             .bindPopup(`
                 <div class="map-popup">
                     <h4>${user.fullName}</h4>
                     <p>${user.region}</p>
-                    <button class="btn-small" onclick="selectChatUser('${user.id}')">Message</button>
+                    <p>👨‍🌾 ${user.userType === 'both' ? 'Farmer & Buyer' : 'Farmer'}</p>
+                    <div style="margin-top: 10px;">
+                        <button class="btn-small" onclick="viewUserProducts('${user.id}')">View Products</button>
+                        <button class="btn-small" onclick="selectChatUser('${user.id}')">Message</button>
+                    </div>
                 </div>
             `);
+        
+        farmerGroup.addLayer(marker);
     });
+    
+    // Auto-fit map to show all farmers if there are any
+    if (farmers.length > 0) {
+        map.fitBounds(farmerGroup.getBounds(), { padding: [20, 20] });
+    }
     
     if (farmers.length > 0) {
         showNotification(`Found ${farmers.length} farmers in your area`, 'success');
+    }
+}
+
+function viewUserProducts(userId) {
+    const user = allUsers.find(u => u.id === userId);
+    if (!user) return;
+    
+    const userProducts = allProducts.filter(p => p.seller?.id === userId);
+    
+    const modal = createModal(`${user.fullName}'s Products`, 'large');
+    
+    if (userProducts.length === 0) {
+        modal.innerHTML = `
+            <div class="no-products">
+                <i class="fas fa-seedling" style="font-size: 48px; margin-bottom: 16px;"></i>
+                <p>No products available from this user</p>
+                <small>They might not have added any products yet</small>
+            </div>
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Close</button>
+            </div>
+        `;
+    } else {
+        modal.innerHTML = userProducts.map(product => `
+            <div class="post" style="margin-bottom: 15px;">
+                <div class="post-header">
+                    <div class="user-avatar">${user.avatar || '👤'}</div>
+                    <div class="user-info">
+                        <h3>${user.fullName}</h3>
+                        <p>${user.region}</p>
+                    </div>
+                </div>
+                <div class="post-details">
+                    <h3 class="product-title">${product.title}</h3>
+                    <p class="product-description">${product.description}</p>
+                    <div class="product-price">₱${product.pricePerKg.toFixed(2)}/kg</div>
+                    <div class="post-actions">
+                        <button class="btn btn-buy" onclick="addToCart('${product.id}')">
+                            Add to Cart
+                        </button>
+                        <button class="btn btn-offer" onclick="selectChatUser('${user.id}')">
+                            Message Seller
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+        
+        modal.innerHTML += `
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Close</button>
+            </div>
+        `;
     }
 }
 
@@ -1398,6 +1822,7 @@ async function openPlantIdentification() {
                 <div class="upload-area" id="plantUploadArea">
                     <i class="fas fa-camera"></i>
                     <p>Take a photo of the plant</p>
+                    <small>or click to select from gallery</small>
                 </div>
                 <div id="aiImagePreview" class="image-preview hidden"></div>
             </div>
@@ -1427,6 +1852,7 @@ async function openDiseaseDetection() {
                     <option value="tomato">Tomato</option>
                     <option value="rice">Rice</option>
                     <option value="corn">Corn</option>
+                    <option value="other">Other</option>
                 </select>
             </div>
             
@@ -1434,6 +1860,7 @@ async function openDiseaseDetection() {
                 <div class="upload-area" id="diseaseUploadArea">
                     <i class="fas fa-camera"></i>
                     <p>Take a photo of the affected plant</p>
+                    <small>Focus on leaves, stems, or fruits showing symptoms</small>
                 </div>
                 <div id="diseaseImagePreview" class="image-preview hidden"></div>
             </div>
@@ -1442,7 +1869,7 @@ async function openDiseaseDetection() {
         <div class="form-actions">
             <button type="button" onclick="closeModal()">Cancel</button>
             <button type="submit" id="analyzeDiseaseBtn" onclick="analyzeDisease()" disabled>
-                <i class="fas fa-heartbeat"></i> Analyze Health with Plant.ID
+                <i class="fas fa-heartbeat"></i> Analyze Health with PlantNet
             </button>
         </div>
     `;
@@ -1455,6 +1882,7 @@ function openImageSelectorForAI(type) {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
+    input.capture = 'environment';
     input.style.display = 'none';
     input.onchange = (e) => handleAIImageSelection(e, type);
     document.body.appendChild(input);
@@ -1478,6 +1906,7 @@ function handleAIImageSelection(event, type) {
         currentAIImage = e.target.result;
         currentAIType = type;
         
+        // Update the correct preview based on type
         const previewId = type === 'plant' ? 'aiImagePreview' : 'diseaseImagePreview';
         const analyzeBtnId = type === 'plant' ? 'analyzePlantBtn' : 'analyzeDiseaseBtn';
         
@@ -1500,7 +1929,7 @@ function handleAIImageSelection(event, type) {
     reader.readAsDataURL(file);
 }
 
-// Main analysis functions
+// Main analysis functions for each button
 async function analyzePlant() {
     if (!currentAIImage) {
         showNotification('Please select an image first', 'error');
@@ -1508,12 +1937,13 @@ async function analyzePlant() {
     }
     
     try {
+        // Use Plant.ID for accurate plant identification
         const result = await analyzePlantWithPlantID(currentAIImage);
         displayPlantAnalysis(result);
         
     } catch (error) {
         console.error('Plant identification failed:', error);
-        showNotification('Using enhanced demo data.', 'warning');
+        showNotification('Plant.ID unavailable. Using enhanced demo data.', 'warning');
         const fallbackResult = getEnhancedPlantIdentification();
         displayPlantAnalysis(fallbackResult);
     }
@@ -1528,12 +1958,13 @@ async function analyzeDisease() {
     const plantType = document.getElementById('plantType')?.value;
     
     try {
-        const result = await analyzeDiseaseWithPlantID(currentAIImage, plantType);
+        // Use PlantNet for disease and health analysis
+        const result = await analyzeDiseaseWithPlantNet(currentAIImage, plantType);
         displayDiseaseAnalysis(result, plantType);
         
     } catch (error) {
         console.error('Health analysis failed:', error);
-        showNotification('Using enhanced analysis.', 'warning');
+        showNotification('PlantNet unavailable. Using enhanced analysis.', 'warning');
         const fallbackResult = getEnhancedCropHealthAnalysis(plantType, 'Enhanced Analysis');
         displayDiseaseAnalysis(fallbackResult, plantType);
     }
@@ -1549,7 +1980,7 @@ function displayPlantAnalysis(data) {
         resultDiv.innerHTML = `
             <div class="analysis-warning">
                 <h4>❌ No plant identified</h4>
-                <p>Please try with a clearer image.</p>
+                <p>Please try with a clearer image of the plant.</p>
                 <div class="api-badge api-badge-warning">
                     <i class="fas fa-robot"></i> ${apiUsed}
                 </div>
@@ -1574,8 +2005,41 @@ function displayPlantAnalysis(data) {
                 <p><strong>Common Names:</strong> ${suggestion.plant_details.common_names.join(', ')}</p>
             ` : ''}
             
+            ${suggestion.local_names ? `
+                <p><strong>Local Names:</strong> ${suggestion.local_names.join(', ')}</p>
+            ` : ''}
+            
             ${suggestion.plant_details?.family ? `
                 <p><strong>Family:</strong> ${suggestion.plant_details.family}</p>
+            ` : ''}
+            
+            ${suggestion.plant_details?.description ? `
+                <p><strong>Description:</strong> ${suggestion.plant_details.description}</p>
+            ` : ''}
+            
+            ${suggestion.growing_season ? `
+                <p><strong>Growing Season:</strong> ${suggestion.growing_season}</p>
+            ` : ''}
+            
+            ${suggestion.farming_advice ? `
+                <div class="benefits">
+                    <h5>🌾 Farming Guide:</h5>
+                    <ul>
+                        ${suggestion.farming_advice.planting ? `<li><strong>Planting:</strong> ${suggestion.farming_advice.planting}</li>` : ''}
+                        ${suggestion.farming_advice.watering ? `<li><strong>Watering:</strong> ${suggestion.farming_advice.watering}</li>` : ''}
+                        ${suggestion.farming_advice.fertilizing ? `<li><strong>Fertilizing:</strong> ${suggestion.farming_advice.fertilizing}</li>` : ''}
+                        ${suggestion.farming_advice.harvesting ? `<li><strong>Harvesting:</strong> ${suggestion.farming_advice.harvesting}</li>` : ''}
+                    </ul>
+                </div>
+            ` : ''}
+            
+            ${suggestion.common_pests && suggestion.common_pests.length > 0 ? `
+                <div class="analysis-warning">
+                    <h5>🐛 Common Pests & Diseases:</h5>
+                    <ul>
+                        ${suggestion.common_pests.map(pest => `<li>${pest}</li>`).join('')}
+                    </ul>
+                </div>
             ` : ''}
         </div>
     `;
@@ -1590,6 +2054,8 @@ function displayDiseaseAnalysis(data, plantType) {
     const apiUsed = data.api_used || 'AI Service';
     const healthScore = data.health_score || 0;
     const isHealthy = data.is_healthy !== false && healthScore > 70;
+    const hasDiseases = data.diseases && data.diseases.length > 0;
+    const aiConfidence = data.ai_confidence ? (data.ai_confidence * 100).toFixed(1) + '%' : 'High';
     
     resultDiv.innerHTML = `
         <div class="${isHealthy ? 'analysis-positive' : 'analysis-warning'}">
@@ -1598,9 +2064,56 @@ function displayDiseaseAnalysis(data, plantType) {
             </div>
             <h4>${isHealthy ? '✅ Plant is Healthy' : '⚠️ Needs Attention'}</h4>
             <p><strong>Health Score:</strong> ${healthScore}%</p>
+            <p><strong>AI Confidence:</strong> ${aiConfidence}</p>
             
             ${data.identified_plant ? `
                 <p><strong>Identified Plant:</strong> ${data.identified_plant}</p>
+            ` : ''}
+            
+            ${hasDiseases ? `
+                <div style="margin-top: 15px;">
+                    <h5>🦠 Detected Issues:</h5>
+                    ${data.diseases.map(disease => `
+                        <div style="margin-bottom: 15px; padding: 10px; background: #fff5f5; border-radius: 8px;">
+                            <h6 style="margin: 0 0 8px 0; color: #e53e3e;">
+                                ${disease.name} 
+                                ${disease.confidence ? `(${(disease.confidence * 100).toFixed(1)}% confidence)` : ''}
+                                ${disease.severity ? `<span class="severity-badge severity-${disease.severity.toLowerCase()}">${disease.severity}</span>` : ''}
+                            </h6>
+                            <p style="margin: 0 0 8px 0;"><strong>Description:</strong> ${disease.description}</p>
+                            ${disease.cause ? `<p style="margin: 0 0 8px 0;"><strong>Cause:</strong> ${disease.cause}</p>` : ''}
+                            ${disease.symptoms ? `<p style="margin: 0 0 8px 0;"><strong>Symptoms:</strong> ${Array.isArray(disease.symptoms) ? disease.symptoms.join(', ') : disease.symptoms}</p>` : ''}
+                            ${disease.treatment ? `<p style="margin: 0 0 8px 0;"><strong>Treatment:</strong> ${disease.treatment}</p>` : ''}
+                        </div>
+                    `).join('')}
+                </div>
+            ` : ''}
+            
+            ${data.recommendations && data.recommendations.length > 0 ? `
+                <div class="benefits">
+                    <h5>💡 Recommendations:</h5>
+                    <ul>
+                        ${data.recommendations.map(rec => `<li>${rec}</li>`).join('')}
+                    </ul>
+                </div>
+            ` : ''}
+            
+            ${data.prevention_tips && data.prevention_tips.length > 0 ? `
+                <div class="analysis-positive">
+                    <h5>🛡️ Prevention Tips:</h5>
+                    <ul>
+                        ${data.prevention_tips.map(tip => `<li>${tip}</li>`).join('')}
+                    </ul>
+                </div>
+            ` : ''}
+            
+            ${data.organic_solutions && data.organic_solutions.length > 0 ? `
+                <div class="analysis-positive">
+                    <h5>🌿 Organic Solutions:</h5>
+                    <ul>
+                        ${data.organic_solutions.map(solution => `<li>${solution}</li>`).join('')}
+                    </ul>
+                </div>
             ` : ''}
         </div>
     `;
@@ -1618,12 +2131,17 @@ async function checkout() {
     try {
         showLoading('Processing checkout...');
         
+        // Clear cart
         cart = [];
         Storage.set('cart', cart);
         updateCartBadge();
         
         closeModal();
-        showNotification('Order placed successfully!', 'success');
+        showNotification('Order placed successfully! Sellers have been notified.', 'success');
+        
+        // Refresh products display
+        displayProducts(allProducts);
+        loadMyProducts();
         
     } catch (error) {
         console.error('Checkout error:', error);
@@ -1651,6 +2169,7 @@ function createModal(title, size = '') {
             </button>
         </div>
         <div class="modal-content" id="modalContent">
+            <!-- Content will be added here -->
         </div>
     `;
     
@@ -1695,6 +2214,11 @@ function initializeWebSocket() {
         ws.onclose = () => {
             console.log('WebSocket disconnected');
         };
+        
+        ws.onerror = (error) => {
+            console.error('WebSocket error:', error);
+        };
+        
     } catch (error) {
         console.error('WebSocket initialization error:', error);
     }

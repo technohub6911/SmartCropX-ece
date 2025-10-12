@@ -1032,7 +1032,467 @@ function loadMyProducts() {
     `).join('');
 }
 
+// ==================== PROFILE MANAGEMENT ====================
+function openEditProfile() {
+    const modal = createModal('✏️ Edit Profile');
+    
+    modal.innerHTML = `
+        <form onsubmit="updateProfileInfo(event)">
+            <div class="form-group">
+                <label for="editFullName">Full Name</label>
+                <input type="text" id="editFullName" class="form-control" value="${currentUser.fullName}" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="editAge">Age</label>
+                <input type="number" id="editAge" class="form-control" value="${currentUser.age}" min="18" max="100" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="editRegion">Region</label>
+                <input type="text" id="editRegion" class="form-control" value="${currentUser.region}" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="editUserType">User Type</label>
+                <select id="editUserType" class="form-control" required>
+                    <option value="farmer" ${currentUser.userType === 'farmer' ? 'selected' : ''}>Farmer</option>
+                    <option value="buyer" ${currentUser.userType === 'buyer' ? 'selected' : ''}>Buyer</option>
+                    <option value="both" ${currentUser.userType === 'both' ? 'selected' : ''}>Both</option>
+                </select>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Cancel</button>
+                <button type="submit">Save Changes</button>
+            </div>
+        </form>
+    `;
+}
+
+function updateProfileInfo(event) {
+    event.preventDefault();
+    
+    const fullName = document.getElementById('editFullName').value.trim();
+    const age = parseInt(document.getElementById('editAge').value);
+    const region = document.getElementById('editRegion').value.trim();
+    const userType = document.getElementById('editUserType').value;
+    
+    if (!fullName || !age || !region || !userType) {
+        showNotification('Please fill all fields', 'error');
+        return;
+    }
+    
+    try {
+        showLoading('Updating profile...');
+        
+        // Update current user
+        currentUser.fullName = fullName;
+        currentUser.age = age;
+        currentUser.region = region;
+        currentUser.userType = userType;
+        
+        // Update in storage
+        Storage.set('currentUser', currentUser);
+        
+        // Update in users array
+        const userIndex = allUsers.findIndex(u => u.id === currentUser.id);
+        if (userIndex !== -1) {
+            allUsers[userIndex] = { ...allUsers[userIndex], ...currentUser };
+        }
+        
+        closeModal();
+        showNotification('Profile updated successfully!', 'success');
+        
+        // Update UI
+        updateProfile();
+        
+    } catch (error) {
+        console.error('Profile update error:', error);
+        showNotification('Failed to update profile', 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+// ==================== PRODUCT MANAGEMENT ====================
+function showAddProductForm() {
+    const modal = createModal('➕ Add New Product');
+    
+    modal.innerHTML = `
+        <form id="addProductForm" onsubmit="saveNewProduct(event)">
+            <div class="form-group">
+                <label for="productTitle">Product Title</label>
+                <input type="text" id="productTitle" class="form-control" placeholder="e.g., Fresh Organic Tomatoes" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="productDescription">Description</label>
+                <textarea id="productDescription" class="form-control" rows="3" placeholder="Describe your product..." required></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="productCategory">Category</label>
+                <select id="productCategory" class="form-control" required>
+                    <option value="">Select Category</option>
+                    <option value="vegetables">Vegetables</option>
+                    <option value="fruits">Fruits</option>
+                    <option value="grains">Grains</option>
+                    <option value="herbs">Herbs</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="productPrice">Price per Kg (₱)</label>
+                <input type="number" id="productPrice" class="form-control" step="0.01" min="1" placeholder="e.g., 120.50" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="productStock">Stock (kg)</label>
+                <input type="number" id="productStock" class="form-control" min="1" placeholder="e.g., 50" required>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Cancel</button>
+                <button type="submit">Add Product</button>
+            </div>
+        </form>
+    `;
+}
+
+// ==================== PRODUCT DETAILS ====================
+function showProductDetails(productId) {
+    const product = allProducts.find(p => p.id === productId);
+    if (!product) {
+        showNotification('Product not found', 'error');
+        return;
+    }
+
+    const modal = createModal('📦 Product Details', 'large');
+    
+    modal.innerHTML = `
+        <div class="product-details">
+            <div class="product-details-header">
+                <div class="product-image-large">
+                    ${product.image ? 
+                        `<img src="${product.image}" alt="${product.title}" style="width: 100%; height: 200px; object-fit: cover; border-radius: 10px;">` :
+                        `<div style="width: 100%; height: 200px; background: var(--light-gray); display: flex; align-items: center; justify-content: center; border-radius: 10px;">
+                            <i class="fas fa-carrot" style="font-size: 48px; color: var(--primary-green);"></i>
+                        </div>`
+                    }
+                </div>
+                <div class="product-basic-info">
+                    <h2>${product.title}</h2>
+                    <div class="product-price-large">₱${product.pricePerKg.toFixed(2)}/kg</div>
+                    <div class="product-seller">
+                        <div class="user-avatar-small">${product.seller?.avatar || '👤'}</div>
+                        <div>
+                            <strong>${product.seller?.fullName || 'Unknown Seller'}</strong>
+                            <p>${product.seller?.region || 'Unknown Region'}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="product-details-content">
+                <div class="detail-section">
+                    <h4>Description</h4>
+                    <p>${product.description}</p>
+                </div>
+                
+                <div class="detail-section">
+                    <h4>Product Information</h4>
+                    <div class="product-meta-grid">
+                        <div class="meta-item">
+                            <span class="meta-label">Category:</span>
+                            <span class="meta-value">${product.category || 'Vegetables'}</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">Stock Available:</span>
+                            <span class="meta-value">${product.stock} kg</span>
+                        </div>
+                        <div class="meta-item">
+                            <span class="meta-label">Rating:</span>
+                            <span class="meta-value">
+                                ${'⭐'.repeat(Math.floor(product.rating || 0))} 
+                                ${product.rating ? product.rating.toFixed(1) : 'No ratings'}
+                                (${product.reviewCount || 0} reviews)
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="product-actions">
+                <button class="btn btn-buy" onclick="addToCart('${product.id}')">
+                    <i class="fas fa-cart-plus"></i> Add to Cart
+                </button>
+                <button class="btn btn-offer" onclick="selectChatUser('${product.seller?.id}'); closeModal();">
+                    <i class="fas fa-comment"></i> Message Seller
+                </button>
+            </div>
+        </div>
+    `;
+}
+function saveNewProduct(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    
+    const title = document.getElementById('productTitle')?.value.trim();
+    const description = document.getElementById('productDescription')?.value.trim();
+    const category = document.getElementById('productCategory')?.value;
+    const price = parseFloat(document.getElementById('productPrice')?.value);
+    const stock = parseInt(document.getElementById('productStock')?.value);
+    
+    if (!title || !description || !category || !price || !stock) {
+        showNotification('Please fill all fields', 'error');
+        return;
+    }
+    
+    if (price <= 0) {
+        showNotification('Price must be greater than 0', 'error');
+        return;
+    }
+    
+    if (stock <= 0) {
+        showNotification('Stock must be greater than 0', 'error');
+        return;
+    }
+    
+    try {
+        showLoading('Adding product...');
+        
+        // Create product object
+        const newProduct = {
+            id: 'prod_' + Date.now(),
+            sellerId: currentUser.id,
+            title,
+            description,
+            pricePerKg: price,
+            category: category,
+            stock,
+            seller: currentUser,
+            image: null,
+            rating: 0,
+            reviewCount: 0,
+            createdAt: new Date().toISOString()
+        };
+        
+        allProducts.push(newProduct);
+        Storage.set('allProducts', allProducts);
+        
+        closeModal();
+        showNotification('Product added successfully!', 'success');
+        
+        // Refresh displays
+        displayProducts(allProducts);
+        loadMyProducts();
+        
+    } catch (error) {
+        console.error('Add product error:', error);
+        showNotification('Failed to add product', 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+function editProduct(productId) {
+    const product = allProducts.find(p => p.id === productId);
+    if (!product) {
+        showNotification('Product not found', 'error');
+        return;
+    }
+    
+    const modal = createModal('✏️ Edit Product');
+    
+    modal.innerHTML = `
+        <form onsubmit="updateProduct(event, '${productId}')">
+            <div class="form-group">
+                <label for="editProductTitle">Product Title</label>
+                <input type="text" id="editProductTitle" class="form-control" value="${product.title}" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="editProductDescription">Description</label>
+                <textarea id="editProductDescription" class="form-control" rows="3" required>${product.description}</textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="editProductCategory">Category</label>
+                <select id="editProductCategory" class="form-control" required>
+                    <option value="vegetables" ${product.category === 'vegetables' ? 'selected' : ''}>Vegetables</option>
+                    <option value="fruits" ${product.category === 'fruits' ? 'selected' : ''}>Fruits</option>
+                    <option value="grains" ${product.category === 'grains' ? 'selected' : ''}>Grains</option>
+                    <option value="herbs" ${product.category === 'herbs' ? 'selected' : ''}>Herbs</option>
+                    <option value="other" ${product.category === 'other' ? 'selected' : ''}>Other</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="editProductPrice">Price per Kg (₱)</label>
+                <input type="number" id="editProductPrice" class="form-control" step="0.01" min="1" value="${product.pricePerKg}" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="editProductStock">Stock (kg)</label>
+                <input type="number" id="editProductStock" class="form-control" min="0" value="${product.stock}" required>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Cancel</button>
+                <button type="submit">Update Product</button>
+                <button type="button" onclick="deleteProduct('${productId}')" style="background: #e74c3c; color: white;">Delete Product</button>
+            </div>
+        </form>
+    `;
+}
+
+function updateProduct(event, productId) {
+    event.preventDefault();
+    
+    const title = document.getElementById('editProductTitle')?.value.trim();
+    const description = document.getElementById('editProductDescription')?.value.trim();
+    const category = document.getElementById('editProductCategory')?.value;
+    const price = parseFloat(document.getElementById('editProductPrice')?.value);
+    const stock = parseInt(document.getElementById('editProductStock')?.value);
+    
+    if (!title || !description || !category || !price || !stock) {
+        showNotification('Please fill all fields', 'error');
+        return;
+    }
+    
+    try {
+        showLoading('Updating product...');
+        
+        const productIndex = allProducts.findIndex(p => p.id === productId);
+        if (productIndex !== -1) {
+            allProducts[productIndex] = {
+                ...allProducts[productIndex],
+                title,
+                description,
+                category,
+                pricePerKg: price,
+                stock
+            };
+            
+            Storage.set('allProducts', allProducts);
+            
+            closeModal();
+            showNotification('Product updated successfully!', 'success');
+            
+            // Refresh displays
+            displayProducts(allProducts);
+            loadMyProducts();
+        }
+        
+    } catch (error) {
+        console.error('Update product error:', error);
+        showNotification('Failed to update product', 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+function deleteProduct(productId) {
+    if (!confirm('Are you sure you want to delete this product? This action cannot be undone.')) {
+        return;
+    }
+    
+    try {
+        showLoading('Deleting product...');
+        
+        allProducts = allProducts.filter(p => p.id !== productId);
+        Storage.set('allProducts', allProducts);
+        
+        closeModal();
+        showNotification('Product deleted successfully', 'success');
+        
+        // Refresh displays
+        displayProducts(allProducts);
+        loadMyProducts();
+        
+    } catch (error) {
+        console.error('Delete product error:', error);
+        showNotification('Failed to delete product', 'error');
+    } finally {
+        hideLoading();
+    }
+}
 // ==================== CART MANAGEMENT ====================
+function updateCartQuantity(productId, newQuantity) {
+    const item = cart.find(item => item.product?.id === productId);
+    if (item) {
+        if (newQuantity <= 0) {
+            removeFromCart(productId);
+        } else if (newQuantity <= item.product.stock) {
+            item.quantity = newQuantity;
+            Storage.set('cart', cart);
+            updateCartBadge();
+            showCart(); // Refresh the cart display
+        } else {
+            showNotification('Cannot add more - stock limit reached', 'warning');
+        }
+    }
+}
+
+function removeFromCart(productId) {
+    cart = cart.filter(item => item.product?.id !== productId);
+    Storage.set('cart', cart);
+    updateCartBadge();
+    showCart(); // Refresh the cart display
+}
+
+function checkout() {
+    if (cart.length === 0) {
+        showNotification('Your cart is empty', 'error');
+        return;
+    }
+
+    try {
+        showLoading('Processing checkout...');
+        
+        // Calculate total
+        let total = 0;
+        cart.forEach(item => {
+            if (item.product) {
+                total += (item.product.pricePerKg || 0) * (item.quantity || 0);
+            }
+        });
+        
+        // Clear cart
+        cart = [];
+        Storage.set('cart', cart);
+        updateCartBadge();
+        
+        closeModal();
+        showNotification(`Order placed successfully! Total: ₱${total.toFixed(2)}. Sellers have been notified.`, 'success');
+        
+        // Refresh products display
+        displayProducts(allProducts);
+        loadMyProducts();
+        
+    } catch (error) {
+        console.error('Checkout error:', error);
+        showNotification('Checkout failed. Please try again.', 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+function updateCartBadge() {
+    const cartBadge = document.querySelector('.cart-badge');
+    const totalItems = cart.reduce((sum, item) => sum + (item.quantity || 0), 0);
+    
+    if (cartBadge) {
+        if (totalItems > 0) {
+            cartBadge.textContent = totalItems > 99 ? '99+' : totalItems;
+            cartBadge.style.display = 'flex';
+        } else {
+            cartBadge.style.display = 'none';
+        }
+    }
+}
 function updateHeaderWithCart() {
     updateCartBadge();
 }
@@ -1100,7 +1560,10 @@ function showCart() {
     modal.innerHTML = `
         <div class="cart-items">
             ${cart.map(item => {
-                if (!item.product) return '';
+                if (!item.product) {
+                    console.warn('Invalid cart item:', item);
+                    return '';
+                }
                 const itemTotal = (item.product.pricePerKg || 0) * (item.quantity || 0);
                 total += itemTotal;
                 return `
@@ -1108,18 +1571,24 @@ function showCart() {
                         <div class="item-info">
                             <h4>${item.product.title || 'Unknown Product'}</h4>
                             <p>₱${(item.product.pricePerKg || 0).toFixed(2)}/kg × ${item.quantity || 0}kg</p>
+                            <small>Seller: ${item.product.seller?.fullName || 'Unknown Seller'}</small>
                         </div>
                         <div class="item-actions">
                             <button class="btn-remove" onclick="removeFromCart('${item.product.id}')">
                                 <i class="fas fa-trash"></i>
                             </button>
+                            <div class="quantity-controls">
+                                <button class="btn-quantity" onclick="updateCartQuantity('${item.product.id}', ${(item.quantity || 0) - 1})">-</button>
+                                <span class="quantity-display">${item.quantity || 0}</span>
+                                <button class="btn-quantity" onclick="updateCartQuantity('${item.product.id}', ${(item.quantity || 0) + 1})">+</button>
+                            </div>
                         </div>
                     </div>
                 `;
             }).join('')}
         </div>
         <div class="cart-total">
-            Total: ₱${total.toFixed(2)}
+            <strong>Total: ₱${total.toFixed(2)}</strong>
         </div>
         <div class="form-actions">
             <button type="button" onclick="closeModal()">Continue Shopping</button>
@@ -1127,14 +1596,6 @@ function showCart() {
         </div>
     `;
 }
-
-function removeFromCart(productId) {
-    cart = cart.filter(item => item.product?.id !== productId);
-    Storage.set('cart', cart);
-    updateCartBadge();
-    showCart();
-}
-
 // ==================== AGRO INPUTS TAB ====================
 function loadAgroInputsTab() {
     const agroInputsTab = document.getElementById('agroInputsTab');
@@ -1144,25 +1605,446 @@ function loadAgroInputsTab() {
         <div class="agro-inputs-container">
             <div class="section-header">
                 <h3>🛒 Agro Inputs Marketplace</h3>
-                <p>Find seeds, fertilizers, and farming tools</p>
+                <p>Find seeds, fertilizers, tools, and farming supplies from trusted suppliers</p>
             </div>
+            
+            <!-- Search and Filter Bar -->
+            <div class="search-filter-bar">
+                <div class="search-bar">
+                    <input type="text" id="agroSearch" placeholder="🔍 Search seeds, fertilizers, tools..." 
+                           onkeyup="filterAgroProducts()" style="flex: 1;">
+                </div>
+                <select id="categoryFilter" onchange="filterAgroProducts()" style="margin-left: 10px;">
+                    <option value="all">All Categories</option>
+                    <option value="seeds">Seeds & Seedlings</option>
+                    <option value="fertilizers">Fertilizers</option>
+                    <option value="pesticides">Pesticides & Herbicides</option>
+                    <option value="tools">Tools & Equipment</option>
+                    <option value="irrigation">Irrigation</option>
+                    <option value="protection">Crop Protection</option>
+                    <option value="organic">Organic Inputs</option>
+                </select>
+            </div>
+            
+            <!-- Seeds & Seedlings Category -->
             <div class="agro-category">
                 <h4>🌱 Seeds & Seedlings</h4>
                 <div class="agro-items">
-                    <div class="agro-item">
+                    <div class="agro-item" data-category="seeds">
                         <div class="agro-item-header">
                             <h5>Tomato Seeds F1 Hybrid</h5>
                             <span class="price">₱150</span>
                         </div>
-                        <p>High-yield hybrid tomato seeds, disease resistant.</p>
-                        <button class="btn-small" onclick="addToCartAgro('Tomato Seeds', 150)">Add to Cart</button>
+                        <p>High-yield hybrid tomato seeds, disease resistant, 98% germination rate.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">East-West Seed Company</span>
+                            <span class="specs">25g pack • 2000 seeds</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Tomato Seeds F1 Hybrid', 150)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Tomato Seeds F1 Hybrid', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/tomato-seeds-f1-hybrid-east-west-seed-company-i123456789.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Tomato-Seeds-F1-Hybrid-East-West-Seed-Company-i.282345678.1234567890'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+
+                    <div class="agro-item" data-category="seeds">
+                        <div class="agro-item-header">
+                            <h5>Jasmine Rice Seeds</h5>
+                            <span class="price">₱280</span>
+                        </div>
+                        <p>Premium quality jasmine rice seeds, high yield potential, aromatic grains.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">PhilRice Certified</span>
+                            <span class="specs">1kg pack • 85% germination</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Jasmine Rice Seeds', 280)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Jasmine Rice Seeds', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/jasmine-rice-seeds-philrice-i123456790.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Jasmine-Rice-Seeds-PhilRice-Certified-i.282345679.1234567891'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Fertilizers Category -->
+            <div class="agro-category">
+                <h4>🧪 Fertilizers & Soil Amendments</h4>
+                <div class="agro-items">
+                    <div class="agro-item" data-category="fertilizers">
+                        <div class="agro-item-header">
+                            <h5>Complete Fertilizer (14-14-14)</h5>
+                            <span class="price">₱1,250</span>
+                        </div>
+                        <p>Balanced NPK fertilizer for general crop use, promotes healthy growth.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Mighty Grow</span>
+                            <span class="specs">50kg bag • All-purpose</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Complete Fertilizer 14-14-14', 1250)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Complete Fertilizer 14-14-14', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/complete-fertilizer-14-14-14-i123456793.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Complete-Fertilizer-14-14-14-Mighty-Grow-i.282345682.1234567894'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pesticides & Herbicides Category -->
+            <div class="agro-category">
+                <h4>🐛 Pesticides & Herbicides</h4>
+                <div class="agro-items">
+                    <div class="agro-item" data-category="pesticides">
+                        <div class="agro-item-header">
+                            <h5>Neem Oil Insecticide</h5>
+                            <span class="price">₱450</span>
+                        </div>
+                        <p>Organic insecticide from neem extract, controls various pests safely.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Natural Guard</span>
+                            <span class="specs">1 liter • Organic</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Neem Oil Insecticide', 450)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Neem Oil Insecticide', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/neem-oil-insecticide-natural-guard-i123456796.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Neem-Oil-Insecticide-Natural-Guard-i.282345685.1234567897'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+
+                    <div class="agro-item" data-category="pesticides">
+                        <div class="agro-item-header">
+                            <h5>Copper Fungicide</h5>
+                            <span class="price">₱380</span>
+                        </div>
+                        <p>Controls fungal diseases like blight, mildew, and leaf spots effectively.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Crop Shield</span>
+                            <span class="specs">500g powder • Broad-spectrum</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Copper Fungicide', 380)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Copper Fungicide', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/copper-fungicide-crop-shield-i123456797.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Copper-Fungicide-Crop-Shield-i.282345686.1234567898'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+
+                    <div class="agro-item" data-category="pesticides">
+                        <div class="agro-item-header">
+                            <h5>Glyphosate Herbicide</h5>
+                            <span class="price">₱520</span>
+                        </div>
+                        <p>Systemic herbicide for weed control in non-crop areas.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Weed Master</span>
+                            <span class="specs">1 liter • Concentrate</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Glyphosate Herbicide', 520)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Glyphosate Herbicide', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/glyphosate-herbicide-weed-master-i123456798.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Glyphosate-Herbicide-Weed-Master-i.282345687.1234567899'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tools & Equipment Category -->
+            <div class="agro-category">
+                <h4>🛠️ Tools & Equipment</h4>
+                <div class="agro-items">
+                    <div class="agro-item" data-category="tools">
+                        <div class="agro-item-header">
+                            <h5>Garden Tool Set</h5>
+                            <span class="price">₱850</span>
+                        </div>
+                        <p>Complete garden tool set including trowel, cultivator, and pruning shears.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Farm Pro Tools</span>
+                            <span class="specs">5-piece set • Steel construction</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Garden Tool Set', 850)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Garden Tool Set', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/garden-tool-set-5-piece-i123456799.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Garden-Tool-Set-5-Piece-Farm-Pro-i.282345688.1234567900'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+
+                    <div class="agro-item" data-category="tools">
+                        <div class="agro-item-header">
+                            <h5>Knapsack Sprayer</h5>
+                            <span class="price">₱1,200</span>
+                        </div>
+                        <p>16L capacity knapsack sprayer for pesticides and liquid fertilizers.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Spray Master</span>
+                            <span class="specs">16 liters • Adjustable nozzle</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Knapsack Sprayer', 1200)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Knapsack Sprayer', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/knapsack-sprayer-16l-i123456800.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Knapsack-Sprayer-16L-Spray-Master-i.282345689.1234567901'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+
+                    <div class="agro-item" data-category="tools">
+                        <div class="agro-item-header">
+                            <h5>Wheelbarrow</h5>
+                            <span class="price">₱1,800</span>
+                        </div>
+                        <p>Heavy-duty wheelbarrow for farm transport, 100kg capacity.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Heavy Hauler</span>
+                            <span class="specs">Steel body • Pneumatic wheel</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Wheelbarrow', 1800)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Wheelbarrow', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/wheelbarrow-heavy-duty-i123456801.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Wheelbarrow-Heavy-Duty-Heavy-Hauler-i.282345690.1234567902'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Irrigation Category -->
+            <div class="agro-category">
+                <h4>💧 Irrigation Systems</h4>
+                <div class="agro-items">
+                    <div class="agro-item" data-category="irrigation">
+                        <div class="agro-item-header">
+                            <h5>Drip Irrigation Kit</h5>
+                            <span class="price">₱2,500</span>
+                        </div>
+                        <p>Complete drip irrigation system for 50sqm garden, water-efficient.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Aqua Flow Systems</span>
+                            <span class="specs">50sqm coverage • Timer included</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Drip Irrigation Kit', 2500)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Drip Irrigation Kit', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/drip-irrigation-kit-50sqm-i123456802.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Drip-Irrigation-Kit-50sqm-Aqua-Flow-i.282345691.1234567903'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+
+                    <div class="agro-item" data-category="irrigation">
+                        <div class="agro-item-header">
+                            <h5>Garden Hose 50ft</h5>
+                            <span class="price">₱650</span>
+                        </div>
+                        <p>Flexible garden hose, UV resistant, with spray nozzle attachment.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Flexi Hose</span>
+                            <span class="specs">50 feet • 8-ply construction</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Garden Hose 50ft', 650)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Garden Hose 50ft', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/garden-hose-50ft-flexi-i123456803.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Garden-Hose-50ft-Flexi-Hose-i.282345692.1234567904'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Crop Protection Category -->
+            <div class="agro-category">
+                <h4>🛡️ Crop Protection</h4>
+                <div class="agro-items">
+                    <div class="agro-item" data-category="protection">
+                        <div class="agro-item-header">
+                            <h5>Bird Netting</h5>
+                            <span class="price">₱320</span>
+                        </div>
+                        <p>Protect fruits and vegetables from birds, reusable plastic netting.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Crop Guard</span>
+                            <span class="specs">4m x 5m • UV resistant</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Bird Netting', 320)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Bird Netting', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/bird-netting-4x5m-i123456804.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Bird-Netting-4x5m-Crop-Guard-i.282345693.1234567905'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+
+                    <div class="agro-item" data-category="protection">
+                        <div class="agro-item-header">
+                            <h5>Shade Cloth 50%</h5>
+                            <span class="price">₱480</span>
+                        </div>
+                        <p>Protect plants from excessive sun, ideal for seedlings and delicate crops.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Sun Shield</span>
+                            <span class="specs">3m x 10m • 50% shade</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Shade Cloth 50%', 480)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Shade Cloth 50%', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/shade-cloth-50-3x10m-i123456805.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Shade-Cloth-50-3x10m-Sun-Shield-i.282345694.1234567906'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Organic Inputs Category -->
+            <div class="agro-category">
+                <h4>🌿 Organic Farming Inputs</h4>
+                <div class="agro-items">
+                    <div class="agro-item" data-category="organic">
+                        <div class="agro-item-header">
+                            <h5>Vermicompost</h5>
+                            <span class="price">₱280</span>
+                        </div>
+                        <p>Premium worm castings, rich in nutrients and beneficial microorganisms.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Earth Worm Organics</span>
+                            <span class="specs">10kg bag • 100% organic</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Vermicompost', 280)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Vermicompost', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/vermicompost-10kg-organic-i123456806.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Vermicompost-10kg-Earth-Worm-Organics-i.282345695.1234567907'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+
+                    <div class="agro-item" data-category="organic">
+                        <div class="agro-item-header">
+                            <h5>Fish Amino Acid (FAA)</h5>
+                            <span class="price">₱180</span>
+                        </div>
+                        <p>Organic liquid fertilizer from fish, rich in nitrogen and amino acids.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Natural Growth</span>
+                            <span class="specs">1 liter • Concentrated</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Fish Amino Acid', 180)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Fish Amino Acid', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/fish-amino-acid-faa-i123456807.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Fish-Amino-Acid-FAA-Natural-Growth-i.282345696.1234567908'}
+                            ])">Buy Now</button>
+                        </div>
+                    </div>
+
+                    <div class="agro-item" data-category="organic">
+                        <div class="agro-item-header">
+                            <h5>Trichoderma Fungicide</h5>
+                            <span class="price">₱220</span>
+                        </div>
+                        <p>Biological fungicide, controls soil-borne diseases naturally.</p>
+                        <div class="agro-item-meta">
+                            <span class="supplier">Bio Control Labs</span>
+                            <span class="specs">200g powder • Beneficial fungi</span>
+                        </div>
+                        <div class="agro-item-actions">
+                            <button class="btn-small" onclick="addToCartAgro('Trichoderma Fungicide', 220)">Add to Cart</button>
+                            <button class="buy-now-btn" onclick="showStoreOptions('Trichoderma Fungicide', [
+                                {name: 'Lazada', url: 'https://www.lazada.com.ph/products/trichoderma-fungicide-organic-i123456808.html'},
+                                {name: 'Shopee', url: 'https://shopee.ph/Trichoderma-Fungicide-Bio-Control-Labs-i.282345697.1234567909'}
+                            ])">Buy Now</button>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
     `;
 }
+// ==================== AGRO INPUTS FILTERING ====================
+function filterAgroProducts() {
+    const searchTerm = document.getElementById('agroSearch')?.value.toLowerCase() || '';
+    const categoryFilter = document.getElementById('categoryFilter')?.value || 'all';
+    
+    const agroItems = document.querySelectorAll('.agro-item');
+    let hasVisibleItems = false;
+    
+    agroItems.forEach(item => {
+        const itemCategory = item.dataset.category;
+        const itemText = item.textContent.toLowerCase();
+        
+        const matchesSearch = !searchTerm || itemText.includes(searchTerm);
+        const matchesCategory = categoryFilter === 'all' || itemCategory === categoryFilter;
+        
+        if (matchesSearch && matchesCategory) {
+            item.style.display = 'block';
+            hasVisibleItems = true;
+        } else {
+            item.style.display = 'none';
+        }
+    });
+    
+    // Show/hide category headers based on visible items
+    document.querySelectorAll('.agro-category').forEach(category => {
+        const categoryType = category.querySelector('h4')?.textContent.toLowerCase() || '';
+        const visibleItems = category.querySelectorAll('.agro-item[style="display: block"]');
+        
+        if (visibleItems.length > 0) {
+            category.style.display = 'block';
+            hasVisibleItems = true;
+        } else {
+            category.style.display = 'none';
+        }
+    });
+    
+    // Show "no results" message if needed
+    showNoResultsMessage(hasVisibleItems);
+}
 
+function showNoResultsMessage(hasVisibleItems) {
+    let noResultsMsg = document.getElementById('noAgroResults');
+    
+    if (!hasVisibleItems) {
+        if (!noResultsMsg) {
+            noResultsMsg = document.createElement('div');
+            noResultsMsg.id = 'noAgroResults';
+            noResultsMsg.className = 'no-results';
+            noResultsMsg.innerHTML = `
+                <div style="text-align: center; padding: 40px 20px; color: var(--medium-gray);">
+                    <i class="fas fa-search" style="font-size: 48px; margin-bottom: 16px;"></i>
+                    <h4>No products found</h4>
+                    <p>Try adjusting your search terms or category filter</p>
+                </div>
+            `;
+            
+            const agroContainer = document.querySelector('.agro-inputs-container');
+            if (agroContainer) {
+                // Insert after the search filter bar
+                const searchBar = document.querySelector('.search-filter-bar');
+                if (searchBar && searchBar.nextSibling) {
+                    agroContainer.insertBefore(noResultsMsg, searchBar.nextSibling);
+                } else {
+                    agroContainer.appendChild(noResultsMsg);
+                }
+            }
+        }
+    } else if (noResultsMsg) {
+        noResultsMsg.remove();
+    }
+}
 function addToCartAgro(name, price) {
     const agroItem = {
         id: 'agro_' + Date.now(),
@@ -1176,6 +2058,54 @@ function addToCartAgro(name, price) {
     Storage.set('cart', cart);
     updateCartBadge();
     showNotification(`${name} added to cart`, 'success');
+}
+// ==================== STORE OPTIONS ====================
+function showStoreOptions(productName, stores) {
+    const modal = createModal(`🛍️ Buy ${productName}`);
+    
+    modal.innerHTML = `
+        <div class="store-options">
+            <p style="margin-bottom: 20px; text-align: center;">Choose where to buy <strong>${productName}</strong>:</p>
+            
+            <div class="store-list">
+                ${stores.map(store => `
+                    <div class="store-option" onclick="redirectToStore('${store.name}', '${store.url}')">
+                        <div class="store-icon">
+                            ${getStoreIcon(store.name)}
+                        </div>
+                        <div class="store-info">
+                            <h4>${store.name}</h4>
+                            <p>Click to open ${store.name} store</p>
+                        </div>
+                        <div class="store-arrow">
+                            <i class="fas fa-external-link-alt"></i>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Cancel</button>
+            </div>
+        </div>
+    `;
+}
+
+function getStoreIcon(storeName) {
+    const icons = {
+        'Lazada': '🏪',
+        'Shopee': '🛍️',
+        'Amazon': '📦',
+        'Facebook Marketplace': '📱',
+        'Local Store': '🏬'
+    };
+    return icons[storeName] || '🛒';
+}
+
+function redirectToStore(storeName, url) {
+    showNotification(`Opening ${storeName}...`, 'info');
+    window.open(url, '_blank');
+    closeModal();
 }
 
 // ==================== MESSAGES TAB ====================
@@ -1206,6 +2136,61 @@ function loadMessagesTab() {
 }
 
 // ==================== CHAT SYSTEM ====================
+// ==================== CHAT SYSTEM ====================
+function filterUsers() {
+    const searchTerm = document.getElementById('userSearchInput')?.value.toLowerCase();
+    const userItems = document.querySelectorAll('.user-selection-item');
+    
+    userItems.forEach(item => {
+        const userName = item.querySelector('strong')?.textContent.toLowerCase() || '';
+        const userRegion = item.querySelector('p')?.textContent.toLowerCase() || '';
+        const userType = item.querySelector('small')?.textContent.toLowerCase() || '';
+        
+        const searchText = userName + ' ' + userRegion + ' ' + userType;
+        
+        if (searchText.includes(searchTerm)) {
+            item.style.display = 'flex';
+        } else {
+            item.style.display = 'none';
+        }
+    });
+}
+
+function showUserSelectionModal() {
+    const modal = createModal('💬 Select User to Chat With');
+    
+    const otherUsers = allUsers.filter(user => user.id !== currentUser?.id);
+    
+    modal.innerHTML = `
+        <div class="users-selection">
+            <div class="search-bar" style="margin-bottom: 15px;">
+                <input type="text" id="userSearchInput" placeholder="🔍 Search users..." 
+                       onkeyup="filterUsers()" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">
+            </div>
+            <div class="users-list" id="usersList">
+                ${otherUsers.map(user => `
+                    <div class="user-selection-item" onclick="selectChatUser('${user.id}')">
+                        <div class="user-avatar-small">${user.avatar || '👤'}</div>
+                        <div class="user-info">
+                            <strong>${user.fullName}</strong>
+                            <p>${user.region} • ${user.userType}</p>
+                            <small>${user.userType === 'seller' || user.userType === 'both' ? '👨‍🌾 Farmer' : '🛒 Buyer'}</small>
+                        </div>
+                        <div class="user-action">
+                            <i class="fas fa-comment"></i>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function selectChatUser(userId) {
+    currentChat = allUsers.find(u => u.id === userId);
+    closeModal();
+    openChat();
+}
 function openChat(userId = null) {
     if (userId) {
         currentChat = allUsers.find(u => u.id === userId);
@@ -1715,7 +2700,78 @@ function getUserName(userId) {
     const user = allUsers.find(u => u.id === userId);
     return user ? user.fullName : 'Unknown User';
 }
+// ==================== GLOBAL FUNCTION AVAILABILITY ====================
+// Make sure all functions are available in the global scope
 
+// Authentication Functions
+window.login = login;
+window.signup = signup;
+window.showSignup = showSignup;
+window.showLogin = showLogin;
+window.selectUserType = selectUserType;
+window.logout = logout;
+
+// Navigation & Tabs
+window.switchTab = switchTab;
+window.openMyFarm = openMyFarm;
+
+// Chat Functions
+window.openChat = openChat;
+window.selectChatUser = selectChatUser;
+window.sendChatMessage = sendChatMessage;
+window.handleChatKeyPress = handleChatKeyPress;
+window.filterUsers = filterUsers;
+window.showUserSelectionModal = showUserSelectionModal;
+window.loadChatMessages = loadChatMessages;
+
+// Cart Functions
+window.addToCart = addToCart;
+window.showCart = showCart;
+window.removeFromCart = removeFromCart;
+window.updateCartQuantity = updateCartQuantity;
+window.checkout = checkout;
+
+// Profile Functions
+window.openEditProfile = openEditProfile;
+window.updateProfileInfo = updateProfileInfo;
+
+// Product Functions
+window.showAddProductForm = showAddProductForm;
+window.saveNewProduct = saveNewProduct;
+window.editProduct = editProduct;
+window.updateProduct = updateProduct;
+window.deleteProduct = deleteProduct;
+window.showProductDetails = showProductDetails;
+
+// AI Features
+window.openPlantIdentification = openPlantIdentification;
+window.openDiseaseDetection = openDiseaseDetection;
+window.analyzePlant = analyzePlant;
+window.analyzeDisease = analyzeDisease;
+window.handleAIImageSelection = handleAIImageSelection;
+
+// Agro Inputs
+window.showStoreOptions = showStoreOptions;
+window.redirectToStore = redirectToStore;
+window.getStoreIcon = getStoreIcon;
+window.addToCartAgro = addToCartAgro;
+window.filterAgroProducts = filterAgroProducts;
+window.getAgroCategory = getAgroCategory;
+
+// Map Functions
+window.initializeMap = initializeMap;
+window.viewUserProducts = viewUserProducts;
+
+// Modal Functions
+window.closeModal = closeModal;
+window.createModal = createModal;
+
+// Utility Functions
+window.showNotification = showNotification;
+window.showLoading = showLoading;
+window.hideLoading = hideLoading;
+
+console.log('✅ All global functions initialized successfully');
 // ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', function() {
     // Check authentication
