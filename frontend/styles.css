@@ -55,10 +55,12 @@ body {
 .auth-header h1 {
     color: var(--primary-green);
     margin-bottom: 10px;
+    font-size: 2.5em;
 }
 
 .auth-header p {
     color: var(--dark-gray);
+    font-size: 1.1em;
 }
 
 .form-group {
@@ -120,6 +122,11 @@ body {
     background: var(--light-green);
 }
 
+.btn-small {
+    padding: 8px 16px;
+    font-size: 14px;
+}
+
 .user-type-selector {
     display: flex;
     gap: 10px;
@@ -139,6 +146,17 @@ body {
 .user-type-option.selected {
     border-color: var(--primary-green);
     background: var(--light-green);
+}
+
+.user-type-option i {
+    font-size: 24px;
+    margin-bottom: 5px;
+    display: block;
+}
+
+.user-type-option div {
+    font-size: 12px;
+    font-weight: 600;
 }
 
 /* App Screen */
@@ -163,12 +181,6 @@ body {
     margin: 0 auto;
 }
 
-.logo {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
 .logo h1 {
     color: var(--primary-green);
     font-size: 24px;
@@ -183,21 +195,26 @@ body {
 .cart-icon {
     position: relative;
     cursor: pointer;
+    padding: 8px;
 }
 
 .cart-badge {
     position: absolute;
-    top: -8px;
-    right: -8px;
+    top: -5px;
+    right: -5px;
     background: #e74c3c;
     color: white;
     border-radius: 50%;
-    width: 20px;
-    height: 20px;
-    font-size: 12px;
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
     display: flex;
     align-items: center;
     justify-content: center;
+}
+
+.profile-mini {
+    cursor: pointer;
 }
 
 /* Navigation */
@@ -205,6 +222,7 @@ body {
     background: var(--white);
     padding: 0 20px;
     border-bottom: 1px solid var(--medium-gray);
+    overflow-x: auto;
 }
 
 .tab-buttons {
@@ -219,11 +237,14 @@ body {
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 16px;
+    font-size: 14px;
     color: var(--dark-gray);
     border-bottom: 3px solid transparent;
     transition: all 0.3s;
     white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .tab-button.active {
@@ -246,6 +267,7 @@ body {
 .feed {
     display: grid;
     gap: 20px;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
 }
 
 .post {
@@ -253,6 +275,11 @@ body {
     border-radius: 10px;
     padding: 20px;
     box-shadow: var(--shadow);
+    transition: transform 0.2s;
+}
+
+.post:hover {
+    transform: translateY(-2px);
 }
 
 .post-header {
@@ -275,6 +302,7 @@ body {
 
 .user-info h3 {
     margin-bottom: 5px;
+    color: var(--dark-gray);
 }
 
 .user-info p {
@@ -303,6 +331,7 @@ body {
 .product-description {
     color: var(--text-color);
     margin-bottom: 10px;
+    line-height: 1.5;
 }
 
 .product-meta {
@@ -337,11 +366,6 @@ body {
     flex: 1;
 }
 
-.btn-small {
-    padding: 8px 16px;
-    font-size: 14px;
-}
-
 /* Profile */
 .profile-section {
     background: var(--white);
@@ -352,12 +376,14 @@ body {
 }
 
 .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     margin-bottom: 20px;
 }
 
 .section-header h3 {
     color: var(--dark-gray);
-    margin-bottom: 5px;
 }
 
 .profile-header {
@@ -380,6 +406,7 @@ body {
 
 .profile-info h2 {
     margin-bottom: 5px;
+    color: var(--dark-gray);
 }
 
 .profile-stats {
@@ -418,6 +445,11 @@ body {
     background: var(--light-gray);
     border-radius: 8px;
     overflow: hidden;
+    transition: transform 0.2s;
+}
+
+.product-card:hover {
+    transform: translateY(-2px);
 }
 
 .product-card-image {
@@ -438,6 +470,7 @@ body {
 .product-card-name {
     font-weight: bold;
     margin-bottom: 5px;
+    color: var(--dark-gray);
 }
 
 .product-card-price {
@@ -471,6 +504,42 @@ body {
     color: var(--medium-gray);
 }
 
+/* Price Monitoring */
+.price-controls {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.price-controls select {
+    padding: 10px 15px;
+    border: 2px solid var(--medium-gray);
+    border-radius: 8px;
+    background: var(--white);
+    font-size: 14px;
+    min-width: 150px;
+}
+
+.chart-container {
+    background: var(--white);
+    padding: 20px;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+}
+
+.chart-container canvas {
+    width: 100% !important;
+    height: 300px !important;
+}
+
+.price-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+}
+
 /* Agro Inputs */
 .agro-inputs-container {
     max-width: 100%;
@@ -494,6 +563,7 @@ body {
     border: 1px solid #ddd;
     border-radius: 5px;
     font-size: 14px;
+    width: 100%;
 }
 
 .agro-category {
@@ -674,6 +744,11 @@ body {
     border-bottom: none;
     font-size: 18px;
     color: var(--primary-green);
+}
+
+.summary-item.savings {
+    color: #27AE60;
+    font-weight: bold;
 }
 
 /* Chat */
@@ -999,6 +1074,10 @@ body {
     margin-top: 20px;
 }
 
+.form-actions button {
+    padding: 10px 20px;
+}
+
 /* Notifications */
 .notification {
     position: fixed;
@@ -1141,6 +1220,19 @@ body {
     color: var(--medium-gray);
 }
 
+.no-products {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--medium-gray);
+    grid-column: 1 / -1;
+}
+
+.no-products i {
+    font-size: 48px;
+    margin-bottom: 16px;
+    display: block;
+}
+
 /* Product Details */
 .product-details {
     max-width: 100%;
@@ -1223,6 +1315,12 @@ body {
     min-width: 120px;
 }
 
+/* Loading */
+.loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     .header-content {
@@ -1236,7 +1334,7 @@ body {
     
     .tab-button {
         padding: 12px 15px;
-        font-size: 14px;
+        font-size: 12px;
     }
     
     .post-actions {
@@ -1275,6 +1373,24 @@ body {
     .message {
         max-width: 85%;
     }
+    
+    .profile-stats {
+        grid-template-columns: 1fr 1fr;
+    }
+    
+    .section-header {
+        flex-direction: column;
+        gap: 10px;
+        align-items: flex-start;
+    }
+    
+    .price-controls {
+        flex-direction: column;
+    }
+    
+    .price-stats {
+        grid-template-columns: 1fr 1fr;
+    }
 }
 
 @media (max-width: 480px) {
@@ -1291,7 +1407,15 @@ body {
         text-align: center;
     }
     
-    .profile-stats {
-        grid-template-columns: 1fr 1fr;
+    .feed {
+        grid-template-columns: 1fr;
+    }
+    
+    .user-type-selector {
+        flex-direction: column;
+    }
+    
+    .price-stats {
+        grid-template-columns: 1fr;
     }
 }

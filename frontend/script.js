@@ -54,7 +54,8 @@ let currentTab = 'feed';
 let map = null;
 let ws = null;
 let selectedProfileImage = null;
-
+let priceChart = null;
+let priceUpdateInterval = null;
 // ==================== IMPROVED AI API INTEGRATION ====================
 
 // Enhanced Plant.ID for accurate plant identification with better error handling
@@ -1071,7 +1072,7 @@ async function signup() {
         showLoading('Creating account...');
         const location = await getDeviceLocation();
         
-        const data = await apiService.post('/register', {
+        const userData = {
             fullName,
             age: parseInt(age),
             region,
@@ -1080,14 +1081,22 @@ async function signup() {
             password,
             avatar: selectedAvatar || '👤',
             location: location,
-            isSeller: userType === 'seller' || userType === 'both'
-        });
+            isSeller: userType === 'seller' || userType === 'both',
+            createdAt: new Date().toISOString()
+        };
+
+        const data = await apiService.post('/register', userData);
 
         authToken = data.token;
         currentUser = data.user;
         
         Storage.set('authToken', authToken);
         Storage.set('currentUser', currentUser);
+        
+        // Add user to local users list for immediate map display
+        if (!allUsers.some(u => u.id === currentUser.id)) {
+            allUsers.push(currentUser);
+        }
         
         document.getElementById('authScreen').classList.add('hidden');
         document.getElementById('appScreen').classList.remove('hidden');
@@ -1262,6 +1271,9 @@ function switchTab(tabName) {
         case 'map':
             setTimeout(() => initializeMap(), 100);
             break;
+        case 'priceMonitoring':
+            setTimeout(() => initializePriceMonitoring(), 100);
+            break;
         case 'profile':
             updateProfile();
             loadMyProducts();
@@ -1308,6 +1320,10 @@ async function loadAppData() {
                 allUsers.push(currentUser);
             }
         }
+        
+        // Initialize real-time systems
+        initializeRealTimeMessaging();
+        initializeProductSync();
         
         displayProducts(allProducts);
         updateProfile();
@@ -1577,6 +1593,14 @@ function openNegotiate(productId) {
                     <div class="summary-item">
                         <span>Offered Price:</span>
                         <span id="summaryPrice">₱${(product.pricePerKg * 0.9).toFixed(2)}/kg</span>
+                    </div>
+                    <div class="summary-item">
+                        <span>Original Total:</span>
+                        <span id="summaryOriginalTotal">₱${product.pricePerKg.toFixed(2)}</span>
+                    </div>
+                    <div class="summary-item savings">
+                        <span>Amount Saved:</span>
+                        <span id="summarySavings">₱${(product.pricePerKg * 0.1).toFixed(2)}</span>
                     </div>
                     <div class="summary-item total">
                         <span>Total Amount:</span>
@@ -2469,7 +2493,7 @@ function redirectToStore(storeName, url) {
     closeModal();
 }
 
-// ==================== MESSAGES TAB ====================
+// ==================== ENHANCED MESSAGING SYSTEM ====================
 function loadMessagesTab() {
     const messagesTab = document.getElementById('messagesTab');
     if (!messagesTab) return;
@@ -2477,31 +2501,146 @@ function loadMessagesTab() {
     // Get other users (excluding current user)
     const otherUsers = allUsers.filter(user => user.id !== currentUser?.id);
     
+    // Get conversations with last messages
+    const conversations = getConversationsWithLastMessages();
+    
     messagesTab.innerHTML = `
         <div class="profile-section">
             <div class="section-header">
                 <h3>💬 Recent Conversations</h3>
-                <small>Chat with farmers and buyers</small>
+                <button class="btn btn-primary btn-small" onclick="showUserSelectionModal()">
+                    <i class="fas fa-plus"></i> New Chat
+                </button>
             </div>
             <div class="conversations-list" id="conversationsList">
-                ${otherUsers.slice(0, 5).map(user => `
-                    <div class="conversation-item" onclick="selectChatUser('${user.id}')">
+                ${conversations.length > 0 ? conversations.map(conv => `
+                    <div class="conversation-item" onclick="selectChatUser('${conv.userId}')">
                         <div class="user-avatar-small">
-                            ${user.avatar || '👤'}
+                            ${conv.user.avatar || '👤'}
                         </div>
                         <div class="conversation-info">
-                            <strong>${user.fullName}</strong>
-                            <p class="conversation-last-message">Click to start conversation...</p>
+                            <strong>${conv.user.fullName}</strong>
+                            <p class="conversation-last-message">${conv.lastMessage}</p>
                         </div>
                         <div class="conversation-time">
-                            Now
+                            ${conv.lastMessageTime}
                         </div>
+                        ${conv.unread ? '<div class="unread-badge"></div>' : ''}
                     </div>
-                `).join('')}
+                `).join('') : `
+                    <div class="no-conversations">
+                        <i class="fas fa-comments" style="font-size: 48px; margin-bottom: 16px;"></i>
+                        <p>No conversations yet</p>
+                        <small>Start a new chat to connect with other users</small>
+                    </div>
+                `}
             </div>
         </div>
     `;
 }
+
+function getConversationsWithLastMessages() {
+    if (!currentUser) return [];
+    
+    const otherUsers = allUsers.filter(user => user.id !== currentUser.id);
+    const conversations = [];
+    
+    otherUsers.forEach(user => {
+        const chatKey = `chat_${currentUser.id}_${user.id}`;
+        const chatMessages = Storage.get(chatKey, []);
+        
+        if (chatMessages.length > 0) {
+            const lastMessage = chatMessages[chatMessages.length - 1];
+            const unread = lastMessage && lastMessage.from !== currentUser.id && !lastMessage.read;
+            
+            conversations.push({
+                userId: user.id,
+                user: user,
+                lastMessage: lastMessage.message.substring(0, 30) + (lastMessage.message.length > 30 ? '...' : ''),
+                lastMessageTime: formatMessageTime(lastMessage.timestamp),
+                unread: unread
+            });
+        }
+    });
+    
+    // Sort by last message time (newest first)
+    return conversations.sort((a, b) => new Date(b.lastMessageTime) - new Date(a.lastMessageTime));
+}
+
+function formatMessageTime(timestamp) {
+    const messageTime = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - messageTime;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return messageTime.toLocaleDateString();
+}
+// ==================== PRODUCT SYNC NOTIFICATIONS ====================
+function notifyNewProducts() {
+    // This function is called when new products are added
+    if (currentTab !== 'feed') {
+        showNotification('New products available in the feed!', 'info');
+    }
+}
+
+// ==================== MODIFIED TAB MANAGEMENT ====================
+function switchTab(tabName) {
+    console.log('Switching to tab:', tabName);
+    
+    // Remove active class from all tab buttons
+    document.querySelectorAll('.tab-button').forEach(button => {
+        button.classList.remove('active');
+    });
+    
+    // Hide all tab contents
+    document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.add('hidden');
+    });
+    
+    // Add active class to clicked tab button
+    const activeButton = document.querySelector(`[onclick="switchTab('${tabName}')"]`);
+    if (activeButton) {
+        activeButton.classList.add('active');
+    }
+    
+    // Show the selected tab content
+    const activeTab = document.getElementById(tabName + 'Tab');
+    if (activeTab) {
+        activeTab.classList.remove('hidden');
+    }
+    
+    currentTab = tabName;
+    
+    // Load content for specific tabs
+    switch(tabName) {
+        case 'feed':
+            displayProducts(allProducts);
+            break;
+        case 'map':
+            setTimeout(() => initializeMap(), 100);
+            break;
+        case 'priceMonitoring':
+            setTimeout(() => initializePriceMonitoring(), 100);
+            break;
+        case 'profile':
+            updateProfile();
+            loadMyProducts();
+            break;
+        case 'agroInputs':
+            loadAgroInputsTab();
+            break;
+        case 'messages':
+            loadMessagesTab();
+            break;
+    }
+}
+
 
 // ==================== CHAT SYSTEM ====================
 function openChat(userId = null) {
@@ -3086,7 +3225,7 @@ function showProductDetails(productId) {
     `;
 }
 
-// ==================== SIMPLE MAP FUNCTIONALITY ====================
+// ==================== ENHANCED MAP FUNCTIONALITY ====================
 async function initializeMap() {
     const mapContainer = document.getElementById('realMap');
     if (!mapContainer) {
@@ -3124,8 +3263,8 @@ async function initializeMap() {
             `)
             .openPopup();
 
-        // Add farmers to map
-        addFarmersToMap();
+        // Add all registered users to map
+        addAllUsersToMap();
         
     } catch (error) {
         console.error('Map initialization failed:', error);
@@ -3145,96 +3284,111 @@ async function initializeMap() {
     }
 }
 
-function addFarmersToMap() {
+function addAllUsersToMap() {
     if (!map) return;
     
-    // Get sellers (users who are sellers or both)
-    const sellers = allUsers.filter(user => 
-        user.isSeller && user.location
+    // Clear existing markers
+    map.eachLayer(layer => {
+        if (layer instanceof L.Marker && layer !== map._marker) {
+            map.removeLayer(layer);
+        }
+    });
+    
+    // Add all registered users (excluding current user)
+    const otherUsers = allUsers.filter(user => 
+        user.id !== currentUser.id && user.location
     );
     
-    // Create a feature group for sellers
-    const sellerGroup = L.featureGroup();
-    
-    sellers.forEach(user => {
-        const marker = L.marker([user.location.lat, user.location.lng])
+    otherUsers.forEach(user => {
+        const isSeller = user.isSeller || user.userType === 'seller' || user.userType === 'both';
+        const iconColor = isSeller ? 'green' : 'blue';
+        
+        const customIcon = L.divIcon({
+            className: 'custom-div-icon',
+            html: `<div style="background-color: ${iconColor}; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 14px;">
+                     ${isSeller ? '👨‍🌾' : '🛒'}
+                   </div>`,
+            iconSize: [30, 30],
+            iconAnchor: [15, 15]
+        });
+        
+        const marker = L.marker([user.location.lat, user.location.lng], { icon: customIcon })
             .addTo(map)
             .bindPopup(`
                 <div class="map-popup">
-                    <h4>${user.fullName}'s Shop</h4>
-                    <p>${user.region}</p>
-                    <p>👨‍🌾 ${user.userType === 'both' ? 'Farmer & Buyer' : 'Farmer'}</p>
-                    <div style="margin-top: 10px;">
-                        <button class="btn-small" onclick="viewUserProducts('${user.id}')">View Products</button>
-                        <button class="btn-small" onclick="selectChatUser('${user.id}')">Message</button>
+                    <h4>${user.fullName}</h4>
+                    <p>📍 ${user.region}</p>
+                    <p>${isSeller ? '👨‍🌾 Farmer' : '🛒 Buyer'}</p>
+                    <p>${user.age} years old</p>
+                    <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 5px;">
+                        ${isSeller ? `<button class="btn-small" onclick="viewUserProducts('${user.id}')">View Products</button>` : ''}
+                        <button class="btn-small" onclick="viewUserProfile('${user.id}')">View Profile</button>
+                        <button class="btn-small" onclick="selectChatUser('${user.id}')">Send Message</button>
                     </div>
                 </div>
             `);
-        
-        sellerGroup.addLayer(marker);
     });
     
-    // Auto-fit map to show all sellers if there are any
-    if (sellers.length > 0) {
-        map.fitBounds(sellerGroup.getBounds(), { padding: [20, 20] });
-    }
-    
-    if (sellers.length > 0) {
-        showNotification(`Found ${sellers.length} sellers in your area`, 'success');
+    if (otherUsers.length > 0) {
+        showNotification(`Found ${otherUsers.length} users in your area`, 'success');
     }
 }
 
-function viewUserProducts(userId) {
+function viewUserProfile(userId) {
     const user = allUsers.find(u => u.id === userId);
     if (!user) return;
     
+    const modal = createModal(`👤 ${user.fullName}'s Profile`, 'medium');
+    
+    modal.innerHTML = `
+        <div class="profile-view">
+            <div class="profile-header">
+                <div class="profile-avatar-large">${user.avatar || '👤'}</div>
+                <div class="profile-info">
+                    <h2>${user.fullName}</h2>
+                    <p>📍 ${user.region}</p>
+                    <p>🎂 ${user.age} years old</p>
+                    <p><strong>Type:</strong> ${user.userType.charAt(0).toUpperCase() + user.userType.slice(1)}</p>
+                    <p><strong>Joined:</strong> ${new Date(user.createdAt || Date.now()).toLocaleDateString()}</p>
+                </div>
+            </div>
+            
+            ${user.isSeller || user.userType === 'seller' || user.userType === 'both' ? `
+                <div class="profile-section">
+                    <h4>🛍️ Products</h4>
+                    <div class="user-products-list">
+                        ${getUserProductsPreview(user.id)}
+                    </div>
+                </div>
+            ` : ''}
+            
+            <div class="form-actions">
+                <button type="button" onclick="selectChatUser('${user.id}')" class="btn-primary">
+                    <i class="fas fa-comment"></i> Send Message
+                </button>
+                <button type="button" onclick="closeModal()">Close</button>
+            </div>
+        </div>
+    `;
+}
+
+function getUserProductsPreview(userId) {
     const userProducts = allProducts.filter(p => p.seller?.id === userId);
     
-    const modal = createModal(`${user.fullName}'s Products`, 'large');
-    
     if (userProducts.length === 0) {
-        modal.innerHTML = `
-            <div class="no-products">
-                <i class="fas fa-seedling" style="font-size: 48px; margin-bottom: 16px;"></i>
-                <p>No products available from this user</p>
-                <small>They might not have added any products yet</small>
-            </div>
-            <div class="form-actions">
-                <button type="button" onclick="closeModal()">Close</button>
-            </div>
-        `;
-    } else {
-        modal.innerHTML = userProducts.map(product => `
-            <div class="post" style="margin-bottom: 15px;">
-                <div class="post-header">
-                    <div class="user-avatar">${user.avatar || '👤'}</div>
-                    <div class="user-info">
-                        <h3>${user.fullName}</h3>
-                        <p>${user.region}</p>
-                    </div>
-                </div>
-                <div class="post-details">
-                    <h3 class="product-title">${product.title}</h3>
-                    <p class="product-description">${product.description}</p>
-                    <div class="product-price">₱${product.pricePerKg.toFixed(2)}/kg</div>
-                    <div class="post-actions">
-                        <button class="btn btn-buy" onclick="addToCart('${product.id}')">
-                            Add to Cart
-                        </button>
-                        <button class="btn btn-offer" onclick="openNegotiate('${product.id}')">
-                            Negotiate
-                        </button>
-                    </div>
-                </div>
-            </div>
-        `).join('');
-        
-        modal.innerHTML += `
-            <div class="form-actions">
-                <button type="button" onclick="closeModal()">Close</button>
-            </div>
-        `;
+        return '<p>No products available yet.</p>';
     }
+    
+    return userProducts.slice(0, 3).map(product => `
+        <div class="product-preview">
+            <strong>${product.title}</strong> - ₱${product.pricePerKg.toFixed(2)}/kg
+            <br><small>Stock: ${product.stock}kg • ${product.category}</small>
+        </div>
+    `).join('') + 
+    (userProducts.length > 3 ? 
+        `<p><small>... and ${userProducts.length - 3} more products</small></p>` : 
+        ''
+    );
 }
 
 // ==================== AI FEATURES ====================
@@ -3714,6 +3868,454 @@ window.createModal = createModal;
 window.showNotification = showNotification;
 window.showLoading = showLoading;
 window.hideLoading = hideLoading;
+// Price Monitoring
+window.initializePriceMonitoring = initializePriceMonitoring;
+window.updatePriceChart = updatePriceChart;
+window.setPriceAlert = setPriceAlert;
+window.viewUserProfile = viewUserProfile;
+
+// ==================== REAL-TIME MESSAGING SYSTEM ====================
+function initializeRealTimeMessaging() {
+    // Simulate WebSocket connection for real-time messaging
+    setInterval(() => {
+        checkForNewMessages();
+    }, 3000); // Check every 3 seconds for new messages
+}
+
+function checkForNewMessages() {
+    if (!currentUser) return;
+    
+    // Get all chat keys for current user
+    const chatKeys = Object.keys(localStorage).filter(key => 
+        key.startsWith(`chat_${currentUser.id}_`) || key.includes(`_${currentUser.id}`)
+    );
+    
+    let hasNewMessages = false;
+    
+    chatKeys.forEach(chatKey => {
+        const chatMessages = Storage.get(chatKey, []);
+        const lastMessage = chatMessages[chatMessages.length - 1];
+        
+        if (lastMessage && lastMessage.from !== currentUser.id && !lastMessage.read) {
+            hasNewMessages = true;
+            
+            // Mark as read
+            lastMessage.read = true;
+            Storage.set(chatKey, chatMessages);
+            
+            // Show notification if user is not currently viewing the chat
+            if (currentTab !== 'messages' || currentChat?.id !== lastMessage.from) {
+                const sender = allUsers.find(u => u.id === lastMessage.from);
+                if (sender) {
+                    showNotification(`New message from ${sender.fullName}: ${lastMessage.message}`, 'info');
+                }
+            }
+        }
+    });
+    
+    // Update messages tab if active
+    if (currentTab === 'messages') {
+        loadMessagesTab();
+    }
+}
+
+// ==================== PRODUCT SYNC SYSTEM ====================
+function initializeProductSync() {
+    setInterval(() => {
+        syncNewProducts();
+    }, 5000); // Sync every 5 seconds
+}
+
+function syncNewProducts() {
+    const lastSyncTime = Storage.get('lastProductSync', 0);
+    const currentTime = Date.now();
+    
+    // Get products added since last sync
+    const newProducts = allProducts.filter(product => 
+        product.createdAt && new Date(product.createdAt).getTime() > lastSyncTime
+    );
+    
+    if (newProducts.length > 0 && currentTab === 'feed') {
+        showNotification(`${newProducts.length} new products available!`, 'info');
+        displayProducts(allProducts);
+    }
+    
+    Storage.set('lastProductSync', currentTime);
+}
+// ==================== VIEW USER PRODUCTS FUNCTION ====================
+function viewUserProducts(userId) {
+    const user = allUsers.find(u => u.id === userId);
+    if (!user) return;
+    
+    const userProducts = allProducts.filter(p => p.seller?.id === userId);
+    
+    const modal = createModal(`${user.fullName}'s Products`, 'large');
+    
+    if (userProducts.length === 0) {
+        modal.innerHTML = `
+            <div class="no-products">
+                <i class="fas fa-seedling" style="font-size: 48px; margin-bottom: 16px;"></i>
+                <p>No products available from this user</p>
+                <small>They might not have added any products yet</small>
+            </div>
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Close</button>
+            </div>
+        `;
+    } else {
+        modal.innerHTML = userProducts.map(product => `
+            <div class="post" style="margin-bottom: 15px;">
+                <div class="post-header">
+                    <div class="user-avatar">${user.avatar || '👤'}</div>
+                    <div class="user-info">
+                        <h3>${user.fullName}</h3>
+                        <p>${user.region}</p>
+                    </div>
+                </div>
+                <div class="post-details">
+                    <h3 class="product-title">${product.title}</h3>
+                    <p class="product-description">${product.description}</p>
+                    <div class="product-price">₱${product.pricePerKg.toFixed(2)}/kg</div>
+                    <div class="post-actions">
+                        <button class="btn btn-buy" onclick="addToCart('${product.id}')">
+                            Add to Cart
+                        </button>
+                        <button class="btn btn-offer" onclick="openNegotiate('${product.id}')">
+                            Negotiate
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+        
+        modal.innerHTML += `
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Close</button>
+            </div>
+        `;
+    }
+}
+// ==================== PRICE MONITORING SYSTEM ====================
+function initializePriceMonitoring() {
+    // Wait a bit for the DOM to be fully ready
+    setTimeout(() => {
+        try {
+            updatePriceChart();
+            
+            // Update prices every 5 minutes
+            if (priceUpdateInterval) {
+                clearInterval(priceUpdateInterval);
+            }
+            
+            priceUpdateInterval = setInterval(() => {
+                updatePriceChart();
+            }, 300000); // 5 minutes
+            
+            // Update price alerts
+            checkPriceAlerts();
+            
+        } catch (error) {
+            console.error('Error initializing price monitoring:', error);
+        }
+    }, 100);
+}
+function updatePriceChart() {
+    const ctx = document.getElementById('priceChart');
+    if (!ctx) {
+        console.error('Price chart canvas not found');
+        return;
+    }
+    
+    const category = document.getElementById('productCategoryFilter')?.value || 'all';
+    const timeRange = document.getElementById('timeRangeFilter')?.value || '24h';
+    
+    // Generate price data based on actual products
+    const priceData = generatePriceData(category, timeRange);
+    
+    // Safely destroy existing chart if it exists
+    if (priceChart && typeof priceChart.destroy === 'function') {
+        priceChart.destroy();
+    }
+    
+    try {
+        priceChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: priceData.labels,
+                datasets: [{
+                    label: 'Average Price (₱/kg)',
+                    data: priceData.prices,
+                    borderColor: '#27AE60',
+                    backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    title: {
+                        display: true,
+                        text: `Price Trend - ${getCategoryDisplayName(category)}`
+                    },
+                    tooltip: {
+                        mode: 'index',
+                        intersect: false
+                    }
+                },
+                scales: {
+                    x: {
+                        display: true,
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        }
+                    },
+                    y: {
+                        display: true,
+                        title: {
+                            display: true,
+                            text: 'Price (₱/kg)'
+                        },
+                        beginAtZero: false
+                    }
+                }
+            }
+        });
+        
+        // Update price stats
+        updatePriceStats(priceData);
+        
+    } catch (error) {
+        console.error('Error creating price chart:', error);
+        showNotification('Failed to load price chart', 'error');
+    }
+}
+function generatePriceData(category, timeRange) {
+    // Filter products by category
+    const filteredProducts = category === 'all' 
+        ? allProducts 
+        : allProducts.filter(p => p.category === category);
+    
+    if (filteredProducts.length === 0) {
+        // Return empty data if no products
+        return {
+            labels: ['No Data'],
+            prices: [0],
+            current: 0,
+            change: 0,
+            high: 0,
+            low: 0
+        };
+    }
+    
+    // Use ACTUAL product prices from the feed
+    const currentPrices = filteredProducts.map(p => p.pricePerKg);
+    const avgPrice = currentPrices.reduce((a, b) => a + b, 0) / currentPrices.length;
+    
+    // Get price history or create realistic trend from current prices
+    const priceHistory = getPriceHistory(filteredProducts, timeRange);
+    
+    return {
+        labels: priceHistory.labels,
+        prices: priceHistory.prices,
+        current: avgPrice,
+        change: calculatePriceChange(priceHistory.prices),
+        high: Math.max(...currentPrices),
+        low: Math.min(...currentPrices)
+    };
+}
+
+// NEW FUNCTION: Get realistic price history based on actual products
+function getPriceHistory(products, timeRange) {
+    const currentAvg = products.reduce((sum, p) => sum + p.pricePerKg, 0) / products.length;
+    const timeLabels = generateTimeLabels(timeRange);
+    
+    // Create realistic price trend based on current average
+    const prices = timeLabels.map((_, index) => {
+        // More realistic price fluctuations based on time of day
+        const baseVariation = getTimeBasedVariation(index, timeLabels.length);
+        const randomVariation = (Math.random() - 0.5) * 0.05; // ±2.5%
+        return currentAvg * (1 + baseVariation + randomVariation);
+    });
+    
+    return {
+        labels: timeLabels,
+        prices: prices.map(p => Number(p.toFixed(2)))
+    };
+}
+
+// NEW FUNCTION: Time-based price variations (more realistic)
+function getTimeBasedVariation(index, totalPoints) {
+    // Prices tend to be higher in morning, lower in afternoon
+    if (totalPoints === 8) { // 24-hour format
+        const timePattern = [0.02, -0.01, -0.02, 0, 0.03, 0.05, 0.03, 0.01]; // Morning peak
+        return timePattern[index] || 0;
+    } else if (totalPoints === 7) { // 7-day format
+        const dayPattern = [0.01, -0.01, 0, 0.02, 0.03, 0.01, -0.02]; // Weekend variations
+        return dayPattern[index] || 0;
+    }
+    return 0;
+}
+
+// NEW FUNCTION: Calculate actual price change
+function calculatePriceChange(prices) {
+    if (prices.length < 2) return 0;
+    const change = ((prices[prices.length - 1] - prices[0]) / prices[0]) * 100;
+    return Number(change.toFixed(1));
+}
+function generateTimeLabels(timeRange) {
+    switch (timeRange) {
+        case '24h':
+            return ['12AM', '3AM', '6AM', '9AM', '12PM', '3PM', '6PM', '9PM'];
+        case '7d':
+            return ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+        case '30d':
+            return ['Week 1', 'Week 2', 'Week 3', 'Week 4'];
+        default:
+            return ['6AM', '12PM', '6PM'];
+    }
+}
+
+function generatePriceVariations(basePrice, dataPoints) {
+    const prices = [];
+    let current = basePrice;
+    
+    for (let i = 0; i < dataPoints; i++) {
+        // Random variation between -5% and +5%
+        const variation = (Math.random() - 0.5) * 0.1;
+        current = basePrice * (1 + variation);
+        prices.push(Number(current.toFixed(2)));
+    }
+    
+    const high = Math.max(...prices);
+    const low = Math.min(...prices);
+    const change = ((prices[prices.length - 1] - prices[0]) / prices[0]) * 100;
+    
+    return {
+        prices,
+        current: prices[prices.length - 1],
+        change: Number(change.toFixed(1)),
+        high: Number(high.toFixed(2)),
+        low: Number(low.toFixed(2))
+    };
+}
+
+function updatePriceStats(priceData) {
+    const currentAvgElement = document.getElementById('currentAvgPrice');
+    const priceChangeElement = document.getElementById('priceChange');
+    const highestPriceElement = document.getElementById('highestPrice');
+    const lowestPriceElement = document.getElementById('lowestPrice');
+    
+    if (currentAvgElement) {
+        currentAvgElement.textContent = priceData.current > 0 
+            ? `₱${priceData.current.toFixed(2)}` 
+            : 'No Data';
+    }
+    
+    if (priceChangeElement) {
+        priceChangeElement.textContent = priceData.current > 0 
+            ? `${priceData.change >= 0 ? '+' : ''}${priceData.change}%` 
+            : '0%';
+        priceChangeElement.style.color = priceData.change >= 0 ? '#27AE60' : '#e74c3c';
+    }
+    
+    if (highestPriceElement) {
+        highestPriceElement.textContent = priceData.high > 0 
+            ? `₱${priceData.high.toFixed(2)}` 
+            : 'No Data';
+    }
+    
+    if (lowestPriceElement) {
+        lowestPriceElement.textContent = priceData.low > 0 
+            ? `₱${priceData.low.toFixed(2)}` 
+            : 'No Data';
+    }
+}
+function getCategoryDisplayName(category) {
+    const names = {
+        'all': 'All Products',
+        'vegetables': 'Vegetables',
+        'fruits': 'Fruits',
+        'grains': 'Grains',
+        'herbs': 'Herbs'
+    };
+    return names[category] || category;
+}
+
+function setPriceAlert() {
+    const product = document.getElementById('alertProduct').value;
+    const price = parseFloat(document.getElementById('alertPrice').value);
+    
+    if (!price || price <= 0) {
+        showNotification('Please enter a valid price', 'error');
+        return;
+    }
+    
+     
+    const alerts = Storage.get('priceAlerts', []);
+    
+    // Check if alert already exists for this product
+    const existingAlert = alerts.find(alert => 
+        alert.userId === currentUser.id && 
+        alert.product === product && 
+        alert.active
+    );
+    
+    if (existingAlert) {
+        showNotification(`You already have an active alert for ${product}`, 'warning');
+        return;
+    }
+    
+    alerts.push({
+        id: 'alert_' + Date.now(),
+        product,
+        price,
+        userId: currentUser.id,
+        createdAt: new Date().toISOString(),
+        active: true,
+        triggered: false
+    });
+    
+    Storage.set('priceAlerts', alerts);
+    showNotification(`✅ Price alert set for ${product} below ₱${price.toFixed(2)}`, 'success');
+    
+    // Test the alert immediately
+    setTimeout(() => checkPriceAlerts(), 1000);
+
+
+    
+    Storage.set('priceAlerts', alerts);
+    showNotification(`Price alert set for ${product} below ₱${price.toFixed(2)}`, 'success');
+}
+
+function checkPriceAlerts() {
+    const alerts = Storage.get('priceAlerts', []);
+    const userAlerts = alerts.filter(alert => 
+        alert.userId === currentUser.id && alert.active
+    );
+    
+    userAlerts.forEach(alert => {
+        // Find products that match the alert product name
+        const relevantProducts = allProducts.filter(p => 
+            p.title.toLowerCase().includes(alert.product.toLowerCase()) ||
+            p.category.toLowerCase().includes(alert.product.toLowerCase())
+        );
+        
+        if (relevantProducts.length > 0) {
+            const avgPrice = relevantProducts.reduce((sum, p) => sum + p.pricePerKg, 0) / relevantProducts.length;
+            
+            if (avgPrice <= alert.price) {
+                showNotification(`🚨 Price Alert: ${alert.product} is now ₱${avgPrice.toFixed(2)} (below your alert of ₱${alert.price.toFixed(2)})`, 'warning');
+                alert.active = false; // Disable alert after triggering
+            }
+        }
+    });
+    
+    Storage.set('priceAlerts', alerts);
+}
 
 // ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', function() {
@@ -3741,7 +4343,13 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('appScreen').classList.add('hidden');
         loadDemoData(); // Initialize demo data for signup
     }
-    
+    // ==================== CLEANUP ON UNLOAD ====================
+window.addEventListener('beforeunload', function() {
+    if (priceUpdateInterval) {
+        clearInterval(priceUpdateInterval);
+    }
+});
+
     // Initialize with feed tab
     switchTab('feed');
     
