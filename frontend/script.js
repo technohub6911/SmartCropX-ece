@@ -4355,3 +4355,58 @@ window.addEventListener('beforeunload', function() {
     
     console.log('✅ All global functions initialized successfully');
 });
+// ==================== ADDITIONAL CSS FOR NEW FEATURES ====================
+function addDynamicStyles() {
+    const style = document.createElement('style');
+    style.textContent = `
+        .unread-badge {
+            width: 12px;
+            height: 12px;
+            background: #e74c3c;
+            border-radius: 50%;
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+        
+        .conversation-item {
+            position: relative;
+        }
+        
+        .product-preview {
+            padding: 8px;
+            margin: 5px 0;
+            background: var(--light-gray);
+            border-radius: 5px;
+            border-left: 3px solid var(--primary-green);
+        }
+        
+        .no-conversations {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--medium-gray);
+        }
+        
+        .price-alerts {
+            background: var(--white);
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+            box-shadow: var(--shadow);
+        }
+        
+        .alert-settings {
+            display: grid;
+            grid-template-columns: 1fr 1fr auto;
+            gap: 15px;
+            align-items: end;
+        }
+        
+        @media (max-width: 768px) {
+            .alert-settings {
+                grid-template-columns: 1fr;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+}
