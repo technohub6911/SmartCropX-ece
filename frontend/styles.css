@@ -745,6 +745,9 @@ body {
     font-size: 18px;
     color: var(--primary-green);
 }
+.summary-item:last-child {
+    border-bottom: none;
+}
 
 .summary-item.savings {
     color: #27AE60;
@@ -1418,4 +1421,211 @@ body {
     .price-stats {
         grid-template-columns: 1fr;
     }
+}
+/* ==================== NOTIFICATION WINDOW ==================== */
+.notification-window {
+    position: fixed;
+    top: 70px;
+    right: 20px;
+    width: 350px;
+    max-height: 500px;
+    background: var(--white);
+    border-radius: 10px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    z-index: 1000;
+    border: 1px solid var(--medium-gray);
+    display: flex;
+    flex-direction: column;
+}
+
+.notification-window.hidden {
+    display: none;
+}
+
+.notification-window-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    border-bottom: 1px solid var(--medium-gray);
+    background: var(--light-green);
+    border-radius: 10px 10px 0 0;
+}
+
+.notification-window-header h3 {
+    margin: 0;
+    color: var(--dark-gray);
+    font-size: 16px;
+}
+
+.notification-list {
+    flex: 1;
+    overflow-y: auto;
+    max-height: 400px;
+}
+
+.notification-item {
+    padding: 15px 20px;
+    border-bottom: 1px solid var(--light-gray);
+    cursor: pointer;
+    transition: background 0.3s;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.notification-item:hover {
+    background: var(--light-gray);
+}
+
+.notification-item.unread {
+    background: rgba(39, 174, 96, 0.05);
+    border-left: 3px solid var(--primary-green);
+}
+
+.notification-item-icon {
+    font-size: 18px;
+    width: 24px;
+    text-align: center;
+    margin-top: 2px;
+}
+
+.notification-item-content {
+    flex: 1;
+}
+
+.notification-item-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: var(--dark-gray);
+}
+
+.notification-item-message {
+    font-size: 14px;
+    color: var(--text-color);
+    line-height: 1.4;
+    margin-bottom: 4px;
+}
+
+.notification-item-time {
+    font-size: 12px;
+    color: var(--medium-gray);
+}
+
+.notification-item-actions {
+    display: flex;
+    gap: 5px;
+    margin-top: 8px;
+}
+
+.notification-window-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--medium-gray);
+    text-align: center;
+}
+
+/* Notification Bell in Header */
+.notification-bell {
+    position: relative;
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 50%;
+    transition: background 0.3s;
+}
+
+.notification-bell:hover {
+    background: var(--light-gray);
+}
+
+.notification-bell-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: #e74c3c;
+    color: white;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+}
+
+/* Notification Types */
+.notification-message { border-left-color: #3498db; }
+.notification-price-alert { border-left-color: #e74c3c; }
+.notification-new-product { border-left-color: #f39c12; }
+.notification-system { border-left-color: #95a5a6; }
+
+/* Responsive */
+@media (max-width: 768px) {
+    .notification-window {
+        width: 300px;
+        right: 10px;
+    }
+}
+
+@media (max-width: 480px) {
+    .notification-window {
+        width: calc(100vw - 40px);
+        right: 20px;
+        left: 20px;
+    }
+}
+/* Popup Notifications */
+.notification-popup {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: var(--white);
+    padding: 15px;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    border-left: 4px solid var(--primary-green);
+    z-index: 1001;
+    max-width: 300px;
+    animation: slideInRight 0.3s ease;
+}
+
+.notification-popup-content {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.notification-popup-icon {
+    font-size: 20px;
+}
+
+.notification-popup button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--medium-gray);
+}
+
+@keyframes slideInRight {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+/* Price difference styling */
+.price-positive {
+    color: #27AE60;
+    font-weight: bold;
+}
+.price-negative {
+    color: #e74c3c;
+    font-weight: bold;
+}
+
+.price-neutral {
+    color: #666;
 }

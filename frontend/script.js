@@ -1,4 +1,18 @@
 // ==================== STORAGE HELPER ====================
+// Debug function to check product storage
+function debugProducts() {
+    console.log('=== PRODUCT DEBUG INFO ===');
+    console.log('allProducts array:', allProducts);
+    console.log('LocalStorage products:', Storage.get('allProducts', []));
+    console.log('Current user products:', allProducts.filter(p => p.seller?.id === currentUser?.id));
+    
+    const stored = Storage.get('allProducts', []);
+    if (stored.length !== allProducts.length) {
+        console.error('❌ MISMATCH: Storage has', stored.length, 'but allProducts has', allProducts.length);
+    } else {
+        console.log('✅ Storage and array match');
+    }
+}
 const Storage = {
     get(key, defaultValue = null) {
         try {
@@ -1297,24 +1311,32 @@ async function loadAppData() {
     try {
         showLoading('Loading app data...');
         
-        // Load products from backend with error handling
-        let productsData;
-        try {
-            productsData = await apiService.get('/products');
-            allProducts = productsData;
-            Storage.set('allProducts', allProducts);
-        } catch (error) {
-            console.warn('Failed to load products from API, using demo data:', error);
-            allProducts = Storage.get('allProducts', []);
+        // Load products from localStorage FIRST
+        let storedProducts = Storage.get('allProducts', []);
+        console.log('Loaded products from storage:', storedProducts);
+        
+        // If we have stored products, use them
+        if (storedProducts && storedProducts.length > 0) {
+            allProducts = storedProducts;
+        } else {
+            // Otherwise try API or load demo data
+            try {
+                const productsData = await apiService.get('/products');
+                allProducts = productsData;
+                Storage.set('allProducts', allProducts);
+            } catch (error) {
+                console.warn('Failed to load products from API, using demo data:', error);
+                await loadDemoData();
+            }
         }
         
-        // Load users from backend with error handling
+        // Load users
         let usersData;
         try {
             usersData = await apiService.get('/users');
             allUsers = usersData;
         } catch (error) {
-            console.warn('Failed to load users from API, using demo data:', error);
+            console.warn('Failed to load users from API:', error);
             // Ensure current user is in the users list
             if (currentUser && !allUsers.some(u => u.id === currentUser.id)) {
                 allUsers.push(currentUser);
@@ -1325,13 +1347,15 @@ async function loadAppData() {
         initializeRealTimeMessaging();
         initializeProductSync();
         
+        // Update ALL displays
         displayProducts(allProducts);
         updateProfile();
         loadMyProducts();
+        updateProfileStats(); // UPDATE STATS HERE TOO
         updateHeaderWithCart();
         updateCartBadge();
         
-        console.log('App data loaded successfully');
+        console.log('App data loaded successfully. Total products:', allProducts.length);
         
     } catch (error) {
         console.error('Failed to load app data:', error);
@@ -1341,8 +1365,8 @@ async function loadAppData() {
         hideLoading();
     }
 }
-
 async function loadDemoData() {
+console.log('Loading demo data...');
     // Fallback demo data if API fails
     if (allUsers.length === 0) {
         allUsers = [
@@ -1416,6 +1440,7 @@ async function loadDemoData() {
             }
         ];
         Storage.set('allProducts', allProducts);
+	console.log('Demo data saved to storage');
         displayProducts(allProducts);
     }
 }
@@ -1591,19 +1616,27 @@ function openNegotiate(productId) {
                         <span id="summaryQuantity">1 kg</span>
                     </div>
                     <div class="summary-item">
+                        <span>Original Price:</span>
+                        <span id="summaryOriginalPrice">₱${product.pricePerKg.toFixed(2)}/kg</span>
+                    </div>
+                    <div class="summary-item">
                         <span>Offered Price:</span>
                         <span id="summaryPrice">₱${(product.pricePerKg * 0.9).toFixed(2)}/kg</span>
+                    </div>
+                    <div class="summary-item">
+                        <span>Price Difference:</span>
+                        <span id="summaryPriceDiff">-₱${(product.pricePerKg * 0.1).toFixed(2)}/kg</span>
                     </div>
                     <div class="summary-item">
                         <span>Original Total:</span>
                         <span id="summaryOriginalTotal">₱${product.pricePerKg.toFixed(2)}</span>
                     </div>
                     <div class="summary-item savings">
-                        <span>Amount Saved:</span>
+                        <span>Total Amount Saved:</span>
                         <span id="summarySavings">₱${(product.pricePerKg * 0.1).toFixed(2)}</span>
                     </div>
                     <div class="summary-item total">
-                        <span>Total Amount:</span>
+                        <span>Final Total Amount:</span>
                         <span id="summaryTotal">₱${(product.pricePerKg * 0.9).toFixed(2)}</span>
                     </div>
                 </div>
@@ -1621,16 +1654,58 @@ function openNegotiate(productId) {
     document.getElementById('negotiateQuantity').addEventListener('input', updateNegotiationSummary);
     
     function updateNegotiationSummary() {
-        const price = parseFloat(document.getElementById('negotiatePrice').value) || 0;
+        const originalPricePerKg = product.pricePerKg;
+        const offeredPricePerKg = parseFloat(document.getElementById('negotiatePrice').value) || 0;
         const quantity = parseInt(document.getElementById('negotiateQuantity').value) || 0;
-        const total = price * quantity;
         
+        // Calculate totals
+        const originalTotal = originalPricePerKg * quantity;
+        const offeredTotal = offeredPricePerKg * quantity;
+        
+        // Calculate savings
+        const priceDiffPerKg = originalPricePerKg - offeredPricePerKg;
+        const totalSavings = originalTotal - offeredTotal;
+        
+        // Update the display
         document.getElementById('summaryQuantity').textContent = `${quantity} kg`;
-        document.getElementById('summaryPrice').textContent = `₱${price.toFixed(2)}/kg`;
-        document.getElementById('summaryTotal').textContent = `₱${total.toFixed(2)}`;
+        document.getElementById('summaryOriginalPrice').textContent = `₱${originalPricePerKg.toFixed(2)}/kg`;
+        document.getElementById('summaryPrice').textContent = `₱${offeredPricePerKg.toFixed(2)}/kg`;
+        document.getElementById('summaryPriceDiff').textContent = `${priceDiffPerKg >= 0 ? '-' : '+'}₱${Math.abs(priceDiffPerKg).toFixed(2)}/kg`;
+        document.getElementById('summaryOriginalTotal').textContent = `₱${originalTotal.toFixed(2)}`;
+        document.getElementById('summarySavings').textContent = `₱${totalSavings.toFixed(2)}`;
+        document.getElementById('summaryTotal').textContent = `₱${offeredTotal.toFixed(2)}`;
+        
+        // Color coding for savings
+        const savingsElement = document.getElementById('summarySavings');
+        const priceDiffElement = document.getElementById('summaryPriceDiff');
+        
+        if (totalSavings > 0) {
+            savingsElement.style.color = '#27AE60';
+            savingsElement.innerHTML = `₱${totalSavings.toFixed(2)} <small>(You save!)</small>`;
+            priceDiffElement.style.color = '#27AE60';
+        } else if (totalSavings < 0) {
+            savingsElement.style.color = '#e74c3c';
+            savingsElement.innerHTML = `-₱${Math.abs(totalSavings).toFixed(2)} <small>(You pay more!)</small>`;
+            priceDiffElement.style.color = '#e74c3c';
+        } else {
+            savingsElement.style.color = '#666';
+            savingsElement.textContent = `₱${totalSavings.toFixed(2)}`;
+            priceDiffElement.style.color = '#666';
+        }
+        
+        // Color for price difference
+        if (priceDiffPerKg > 0) {
+            priceDiffElement.style.color = '#27AE60';
+        } else if (priceDiffPerKg < 0) {
+            priceDiffElement.style.color = '#e74c3c';
+        } else {
+            priceDiffElement.style.color = '#666';
+        }
     }
+    
+    // Initial calculation
+    updateNegotiationSummary();
 }
-
 function submitNegotiation(event, productId) {
     event.preventDefault();
     
@@ -2648,9 +2723,10 @@ function switchTab(tabName) {
             setTimeout(() => initializePriceMonitoring(), 100);
             break;
         case 'profile':
-            updateProfile();
-            loadMyProducts();
-            break;
+    		updateProfile();
+    		loadMyProducts();
+    		updateProfileStats(); // ADD THIS LINE
+    		break;
         case 'agroInputs':
             loadAgroInputsTab();
             break;
@@ -2850,6 +2926,7 @@ function simulateMessageNotification(receiverId, message) {
     receiverConversation.updatedAt = new Date().toISOString();
     saveConversation(receiverConversation);
 }
+
 // ==================== EDIT PROFILE ====================
 function openEditProfile() {
     const modal = createModal('✏️ Edit Profile');
@@ -3008,31 +3085,44 @@ function saveNewProduct(event) {
     try {
         showLoading('Adding product...');
         
-        // Create product object
+        // Create product object with proper structure
         const newProduct = {
             id: 'prod_' + Date.now(),
             sellerId: currentUser.id,
-            title,
-            description,
+            title: title,
+            description: description,
             pricePerKg: price,
             category: category,
-            stock,
-            seller: currentUser,
+            stock: stock,
+            seller: {
+                id: currentUser.id,
+                fullName: currentUser.fullName,
+                region: currentUser.region,
+                avatar: currentUser.avatar
+            },
             image: null,
             rating: 0,
             reviewCount: 0,
             createdAt: new Date().toISOString()
         };
         
+        console.log('Adding new product:', newProduct);
+        
+        // Add to allProducts array
         allProducts.push(newProduct);
+        
+        // SAVE TO LOCALSTORAGE - THIS IS CRITICAL!
         Storage.set('allProducts', allProducts);
+        
+        console.log('Products after save:', allProducts);
         
         closeModal();
         showNotification('Product added successfully!', 'success');
         
-        // Refresh displays
+        // Refresh ALL displays
         displayProducts(allProducts);
         loadMyProducts();
+        updateProfileStats(); // Update stats
         
     } catch (error) {
         console.error('Add product error:', error);
@@ -3811,8 +3901,13 @@ function getUserName(userId) {
 
 // ==================== GLOBAL FUNCTION AVAILABILITY ====================
 // Make sure all functions are available in the global scope
+window.toggleNotificationWindow = toggleNotificationWindow;
+window.clearAllNotifications = clearAllNotifications;
+window.handleNotificationClick = handleNotificationClick;
+window.handleNotificationAction = handleNotificationAction;
 
 // Authentication Functions
+window.debugProducts = debugProducts;
 window.login = login;
 window.signup = signup;
 window.showSignup = showSignup;
@@ -4015,7 +4110,20 @@ function syncNewProducts() {
     }
     
     Storage.set('lastProductSync', currentTime);
+ if (newProducts.length > 0) {
+        addNotification(
+            'New Products Available',
+            `${newProducts.length} new products have been added to the marketplace`,
+            'new-product',
+            [
+                { type: 'view', label: 'View Feed' },
+                { type: 'dismiss', label: 'Dismiss' }
+            ]
+        );
+    }
 }
+
+
 // ==================== VIEW USER PRODUCTS FUNCTION ====================
 function viewUserProducts(userId) {
     const user = allUsers.find(u => u.id === userId);
@@ -4382,16 +4490,333 @@ function checkPriceAlerts() {
             const avgPrice = relevantProducts.reduce((sum, p) => sum + p.pricePerKg, 0) / relevantProducts.length;
             
             if (avgPrice <= alert.price) {
-                showNotification(`🚨 Price Alert: ${alert.product} is now ₱${avgPrice.toFixed(2)} (below your alert of ₱${alert.price.toFixed(2)})`, 'warning');
+                addNotification(
+            'Price Alert Triggered!',
+            `${alert.product} is now ₱${avgPrice.toFixed(2)} (below your alert of ₱${alert.price.toFixed(2)})`,
+'warning');
                 alert.active = false; // Disable alert after triggering
+'price-alert',
+            [
+                { type: 'view', label: 'View Prices' },
+                { type: 'dismiss', label: 'Dismiss' }
+            ]
             }
         }
     });
     
     Storage.set('priceAlerts', alerts);
 }
+// ==================== PROFILE STATS UPDATER ====================
+function updateProfileStats() {
+    if (!currentUser) return;
+    
+    // Calculate user's products
+    const userProducts = allProducts.filter(product => 
+        product.seller?.id === currentUser.id
+    );
+    
+    // Calculate sales (simulated - in real app this would come from orders)
+    const salesCount = userProducts.reduce((total, product) => {
+        return total + (product.stock || 0); // Using stock as simulated sales
+    }, 0);
+    
+    // Calculate average rating
+    const totalRating = userProducts.reduce((sum, product) => sum + (product.rating || 0), 0);
+    const averageRating = userProducts.length > 0 ? (totalRating / userProducts.length).toFixed(1) : 0;
+    
+    // Calculate total reviews
+    const totalReviews = userProducts.reduce((sum, product) => sum + (product.reviewCount || 0), 0);
+    
+    // Update the DOM elements
+    const productsCountElement = document.getElementById('productsCount');
+    const salesCountElement = document.getElementById('salesCount');
+    const ratingScoreElement = document.getElementById('ratingScore');
+    const reviewsCountElement = document.getElementById('reviewsCount');
+    
+    if (productsCountElement) productsCountElement.textContent = userProducts.length;
+    if (salesCountElement) salesCountElement.textContent = salesCount;
+    if (ratingScoreElement) ratingScoreElement.textContent = averageRating;
+    if (reviewsCountElement) reviewsCountElement.textContent = totalReviews;
+    
+    console.log('Stats updated:', {
+        products: userProducts.length,
+        sales: salesCount,
+        rating: averageRating,
+        reviews: totalReviews
+    });
+}
+// ==================== NOTIFICATION SYSTEM ====================
+let notifications = Storage.get('notifications', []);
+let notificationWindowVisible = false;
 
+// Initialize notification system
+function initializeNotificationSystem() {
+    updateNotificationBadge();
+    
+    // Check for new notifications every 10 seconds
+    setInterval(() => {
+        checkForNotifications();
+    }, 10000);
+}
+
+// Toggle notification window
+function toggleNotificationWindow() {
+    const notificationWindow = document.getElementById('notificationWindow');
+    const notificationBadge = document.getElementById('notificationBadge');
+    
+    if (notificationWindowVisible) {
+        notificationWindow.classList.add('hidden');
+        notificationWindowVisible = false;
+    } else {
+        notificationWindow.classList.remove('hidden');
+        notificationWindowVisible = true;
+        
+        // Mark all as read when opening
+        markAllNotificationsAsRead();
+        
+        // Load notifications
+        loadNotificationWindow();
+    }
+}
+
+// Load notifications into the window
+function loadNotificationWindow() {
+    const notificationList = document.getElementById('notificationList');
+    if (!notificationList) return;
+    
+    if (notifications.length === 0) {
+        notificationList.innerHTML = `
+            <div class="notification-item">
+                <div class="notification-item-icon">📭</div>
+                <div class="notification-item-content">
+                    <div class="notification-item-title">No notifications</div>
+                    <div class="notification-item-message">You're all caught up!</div>
+                </div>
+            </div>
+        `;
+        return;
+    }
+    
+    // Sort by timestamp (newest first)
+    const sortedNotifications = [...notifications].sort((a, b) => 
+        new Date(b.timestamp) - new Date(a.timestamp)
+    );
+    
+    notificationList.innerHTML = sortedNotifications.map(notification => `
+        <div class="notification-item ${notification.read ? '' : 'unread'} ${notification.type ? 'notification-' + notification.type : ''}" 
+             onclick="handleNotificationClick('${notification.id}')">
+            <div class="notification-item-icon">${getNotificationIcon(notification.type)}</div>
+            <div class="notification-item-content">
+                <div class="notification-item-title">${notification.title}</div>
+                <div class="notification-item-message">${notification.message}</div>
+                <div class="notification-item-time">${formatNotificationTime(notification.timestamp)}</div>
+                ${notification.actions ? `
+                    <div class="notification-item-actions">
+                        ${notification.actions.map(action => `
+                            <button class="btn-small" onclick="event.stopPropagation(); handleNotificationAction('${notification.id}', '${action.type}')">
+                                ${action.label}
+                            </button>
+                        `).join('')}
+                    </div>
+                ` : ''}
+            </div>
+        </div>
+    `).join('');
+}
+
+// Add a new notification
+function addNotification(title, message, type = 'system', actions = []) {
+    const newNotification = {
+        id: 'notif_' + Date.now(),
+        title,
+        message,
+        type,
+        read: false,
+        timestamp: new Date().toISOString(),
+        actions
+    };
+    
+    notifications.unshift(newNotification); // Add to beginning
+    
+    // Keep only last 50 notifications
+    if (notifications.length > 50) {
+        notifications = notifications.slice(0, 50);
+    }
+    
+    Storage.set('notifications', notifications);
+    updateNotificationBadge();
+    
+    // Show popup notification if window is closed
+    if (!notificationWindowVisible) {
+        showPopupNotification(newNotification);
+    }
+    
+    // Reload notification window if it's open
+    if (notificationWindowVisible) {
+        loadNotificationWindow();
+    }
+    
+    console.log('Notification added:', newNotification);
+}
+
+// Show popup notification (like toast)
+function showPopupNotification(notification) {
+    const popup = document.createElement('div');
+    popup.className = `notification-popup ${notification.type}`;
+    popup.innerHTML = `
+        <div class="notification-popup-content">
+            <div class="notification-popup-icon">${getNotificationIcon(notification.type)}</div>
+            <div>
+                <strong>${notification.title}</strong>
+                <p>${notification.message}</p>
+            </div>
+            <button onclick="this.parentElement.parentElement.remove()">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    `;
+    
+    document.body.appendChild(popup);
+    
+    // Auto remove after 5 seconds
+    setTimeout(() => {
+        if (popup.parentElement) {
+            popup.remove();
+        }
+    }, 5000);
+}
+
+// Update notification badge count
+function updateNotificationBadge() {
+    const badge = document.getElementById('notificationBadge');
+    if (!badge) return;
+    
+    const unreadCount = notifications.filter(n => !n.read).length;
+    
+    if (unreadCount > 0) {
+        badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+        badge.style.display = 'flex';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+// Mark all notifications as read
+function markAllNotificationsAsRead() {
+    let updated = false;
+    
+    notifications.forEach(notification => {
+        if (!notification.read) {
+            notification.read = true;
+            updated = true;
+        }
+    });
+    
+    if (updated) {
+        Storage.set('notifications', notifications);
+        updateNotificationBadge();
+        loadNotificationWindow();
+    }
+}
+
+// Clear all notifications
+function clearAllNotifications() {
+    if (notifications.length === 0) return;
+    
+    if (confirm('Clear all notifications?')) {
+        notifications = [];
+        Storage.set('notifications', notifications);
+        updateNotificationBadge();
+        loadNotificationWindow();
+        showNotification('All notifications cleared', 'success');
+    }
+}
+
+// Handle notification click
+function handleNotificationClick(notificationId) {
+    const notification = notifications.find(n => n.id === notificationId);
+    if (!notification) return;
+    
+    // Mark as read
+    notification.read = true;
+    Storage.set('notifications', notifications);
+    updateNotificationBadge();
+    loadNotificationWindow();
+    
+    // Handle different notification types
+    switch (notification.type) {
+        case 'message':
+            // Open messages tab and select the user
+            if (notification.userId) {
+                switchTab('messages');
+                selectChatUser(notification.userId);
+            }
+            break;
+        case 'price-alert':
+            // Open price monitoring tab
+            switchTab('priceMonitoring');
+            break;
+        case 'new-product':
+            // Open feed tab
+            switchTab('feed');
+            break;
+    }
+    
+    // Close notification window after click
+    toggleNotificationWindow();
+}
+
+// Handle notification actions
+function handleNotificationAction(notificationId, actionType) {
+    const notification = notifications.find(n => n.id === notificationId);
+    if (!notification) return;
+    
+    switch (actionType) {
+        case 'view':
+            handleNotificationClick(notificationId);
+            break;
+        case 'dismiss':
+            notifications = notifications.filter(n => n.id !== notificationId);
+            Storage.set('notifications', notifications);
+            updateNotificationBadge();
+            loadNotificationWindow();
+            break;
+    }
+}
+
+// Helper functions
+function getNotificationIcon(type) {
+    const icons = {
+        'message': '💬',
+        'price-alert': '🚨',
+        'new-product': '🆕',
+        'system': 'ℹ️'
+    };
+    return icons[type] || '🔔';
+}
+
+function formatNotificationTime(timestamp) {
+    const now = new Date();
+    const notificationTime = new Date(timestamp);
+    const diffMs = now - notificationTime;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return notificationTime.toLocaleDateString();
+}
+
+// Check for new notifications
+function checkForNotifications() {
+    // This would check for new messages, price alerts, etc.
+    // For now, we'll rely on other systems to call addNotification()
+}
 // ==================== INITIALIZATION ====================
+
 document.addEventListener('DOMContentLoaded', function() {
     console.log('SmartXCrop App Initialized');
 
@@ -4416,17 +4841,19 @@ if (savedUser && savedToken) {
     document.getElementById('authScreen').classList.add('hidden');
     document.getElementById('appScreen').classList.remove('hidden');
 } else {
+ loadAppData();
     document.getElementById('authScreen').classList.remove('hidden');
     document.getElementById('appScreen').classlassList.add('hidden');
     loadDemoData(); // Initialize demo data for signup
 }
+
 
 // Initialize with feed tab
 switchTab('feed');
 
 console.log('✅ All features initialized successfully');
 });
-// ==================== ADDITIONAL CSS FOR NEW FEATURES ====================
+//==================== ADDITIONAL CSS FOR NEW FEATURES ====================
 function addDynamicStyles() {
     const style = document.createElement('style');
     style.textContent = `

@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+
     <!-- Authentication Screen -->
     <div id="authScreen" class="auth-screen">
         <div class="auth-container">
@@ -99,6 +100,12 @@
                     <h1>🌱 SmartXCrop</h1>
                 </div>
                 <div class="header-actions">
+                    <!-- NEW: Notification Bell -->
+                    <div class="notification-bell" onclick="toggleNotificationWindow()">
+                        <i class="fas fa-bell"></i>
+                        <div class="notification-bell-badge" id="notificationBadge" style="display: none;">0</div>
+                    </div>
+                    
                     <div class="cart-icon" onclick="showCart()">
                         <i class="fas fa-shopping-cart"></i>
                         <div class="cart-badge" style="display: none;">0</div>
@@ -112,6 +119,24 @@
                 </div>
             </div>
         </header>
+
+        <!-- NEW: Notification Window -->
+        <div id="notificationWindow" class="notification-window hidden">
+            <div class="notification-window-header">
+                <h3>🔔 Notifications</h3>
+                <button class="btn btn-small" onclick="toggleNotificationWindow()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="notification-list" id="notificationList">
+                <!-- Notifications will be dynamically added here -->
+            </div>
+            <div class="notification-window-footer">
+                <button class="btn btn-small" onclick="clearAllNotifications()">
+                    <i class="fas fa-trash"></i> Clear All
+                </button>
+            </div>
+        </div>
 
         <!-- Navigation Tabs -->
         <nav class="nav-tabs">
