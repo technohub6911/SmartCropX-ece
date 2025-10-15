@@ -2498,36 +2498,45 @@ function loadMessagesTab() {
     const messagesTab = document.getElementById('messagesTab');
     if (!messagesTab) return;
     
-    // Get other users (excluding current user)
-    const otherUsers = allUsers.filter(user => user.id !== currentUser?.id);
-    
-    // Get conversations with last messages
-    const conversations = getConversationsWithLastMessages();
+    const conversations = getAllConversations();
     
     messagesTab.innerHTML = `
         <div class="profile-section">
             <div class="section-header">
-                <h3>💬 Recent Conversations</h3>
+                <h3>💬 Real-Time Chat</h3>
                 <button class="btn btn-primary btn-small" onclick="showUserSelectionModal()">
                     <i class="fas fa-plus"></i> New Chat
                 </button>
             </div>
             <div class="conversations-list" id="conversationsList">
-                ${conversations.length > 0 ? conversations.map(conv => `
-                    <div class="conversation-item" onclick="selectChatUser('${conv.userId}')">
-                        <div class="user-avatar-small">
-                            ${conv.user.avatar || '👤'}
+                ${conversations.length > 0 ? conversations.map(conv => {
+                    const otherUser = getOtherUserFromConversation(conv);
+                    const lastMessage = conv.messages[conv.messages.length - 1];
+                    const unreadCount = getUnreadMessageCount(conv);
+                    
+                    return `
+                        <div class="conversation-item" onclick="selectChatUser('${otherUser.id}')">
+                            <div class="user-avatar-small">
+                                ${otherUser.avatar || '👤'}
+                            </div>
+                            <div class="conversation-info">
+                                <strong>${otherUser.fullName}</strong>
+                                <p class="conversation-last-message">
+                                    ${lastMessage ? 
+                                        `${lastMessage.senderId === currentUser.id ? 'You: ' : ''}${lastMessage.message}` 
+                                        : 'Start a conversation...'
+                                    }
+                                </p>
+                            </div>
+                            <div class="conversation-time">
+                                ${lastMessage ? formatMessageTime(lastMessage.timestamp) : 'New'}
+                            </div>
+                            ${unreadCount > 0 ? `
+                                <div class="unread-badge">${unreadCount}</div>
+                            ` : ''}
                         </div>
-                        <div class="conversation-info">
-                            <strong>${conv.user.fullName}</strong>
-                            <p class="conversation-last-message">${conv.lastMessage}</p>
-                        </div>
-                        <div class="conversation-time">
-                            ${conv.lastMessageTime}
-                        </div>
-                        ${conv.unread ? '<div class="unread-badge"></div>' : ''}
-                    </div>
-                `).join('') : `
+                    `;
+                }).join('') : `
                     <div class="no-conversations">
                         <i class="fas fa-comments" style="font-size: 48px; margin-bottom: 16px;"></i>
                         <p>No conversations yet</p>
@@ -2539,6 +2548,16 @@ function loadMessagesTab() {
     `;
 }
 
+// NEW: Helper functions
+function getOtherUserFromConversation(conversation) {
+    return conversation.user1Id === currentUser.id ? conversation.user2 : conversation.user1;
+}
+
+function getUnreadMessageCount(conversation) {
+    return conversation.messages.filter(msg => 
+        msg.senderId !== currentUser.id && !msg.read
+    ).length;
+}
 function getConversationsWithLastMessages() {
     if (!currentUser) return [];
     
@@ -2742,30 +2761,34 @@ function filterUsers() {
 function loadChatMessages() {
     if (!currentChat || !currentUser) return;
     
-    const chatKey = `chat_${currentUser.id}_${currentChat.id}`;
-    const chatMessages = Storage.get(chatKey, []);
-    
+    const conversation = getOrCreateConversation(currentUser.id, currentChat.id);
     const chatMessagesDiv = document.getElementById('chatMessages');
     if (!chatMessagesDiv) return;
     
-    if (chatMessages.length === 0) {
+    if (conversation.messages.length === 0) {
         chatMessagesDiv.innerHTML = `
             <div class="message system-message">
                 <div class="message-content">
                     <strong>Chat started with ${currentChat.fullName}</strong><br>
-                    <small>You can now send messages to each other</small>
+                    <small>You can now send real messages to each other</small>
                 </div>
             </div>
         `;
     } else {
-        chatMessagesDiv.innerHTML = chatMessages.map(msg => {
-            const isMe = msg.from === currentUser.id;
+        chatMessagesDiv.innerHTML = conversation.messages.map(msg => {
+            const isMe = msg.senderId === currentUser.id;
             const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            
+            // Mark as read when viewing
+            if (!isMe && !msg.read) {
+                msg.read = true;
+                saveConversation(conversation);
+            }
             
             return `
                 <div class="message ${isMe ? 'sent' : 'received'}">
                     <div class="message-content">${msg.message}</div>
-                    <div class="message-time">${time}</div>
+                    <div class="message-time">${time} ${isMe ? '✓' : ''}</div>
                 </div>
             `;
         }).join('');
@@ -2773,7 +2796,6 @@ function loadChatMessages() {
     
     chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
 }
-
 function handleChatKeyPress(event) {
     if (event.key === 'Enter') {
         sendChatMessage();
@@ -2786,55 +2808,48 @@ function sendChatMessage() {
     
     if (!message || !currentChat || !currentUser) return;
     
-    const chatKey = `chat_${currentUser.id}_${currentChat.id}`;
-    const chatMessages = Storage.get(chatKey, []);
+    // Get or create conversation
+    const conversation = getOrCreateConversation(currentUser.id, currentChat.id);
     
-    // Add user message
-    chatMessages.push({
+    // Add message to conversation
+    const newMessage = {
+        id: 'msg_' + Date.now(),
+        senderId: currentUser.id,
+        receiverId: currentChat.id,
         message: message,
         timestamp: new Date().toISOString(),
-        from: currentUser.id
-    });
+        read: false
+    };
     
-    Storage.set(chatKey, chatMessages);
+    conversation.messages.push(newMessage);
+    conversation.updatedAt = new Date().toISOString();
+    
+    // Save conversation
+    saveConversation(conversation);
     
     input.value = '';
     loadChatMessages();
     
-    // Simulate response after 2 seconds
-    setTimeout(() => {
-        simulateChatResponse();
-    }, 2000);
+    // NOTIFY THE OTHER USER (this would be real-time in a real app)
+    simulateMessageNotification(currentChat.id, newMessage);
+    
+    showNotification('Message sent!', 'success');
 }
 
-function simulateChatResponse() {
-    if (!currentChat) return;
+// NEW: Simulate message notification to other user
+function simulateMessageNotification(receiverId, message) {
+    // In a real app, this would be a push notification or WebSocket
+    console.log(`Message sent to user ${receiverId}: ${message.message}`);
     
-    const responses = [
-        "Thanks for your message! I'll get back to you soon.",
-        "I'm interested in your products. Can you tell me more?",
-        "When can I expect delivery?",
-        "Do you offer bulk discounts?"
-    ];
-    
-    const randomResponse = responses[Math.floor(Math.random() * responses.length)];
-    
-    const chatKey = `chat_${currentUser.id}_${currentChat.id}`;
-    const chatMessages = Storage.get(chatKey, []);
-    
-    chatMessages.push({
-        message: randomResponse,
-        timestamp: new Date().toISOString(),
-        from: currentChat.id
+    // Store the message for the receiver to see
+    const receiverConversation = getOrCreateConversation(receiverId, currentUser.id);
+    receiverConversation.messages.push({
+        ...message,
+        read: false // Mark as unread for receiver
     });
-    
-    Storage.set(chatKey, chatMessages);
-    
-    if (document.getElementById('chatMessages')) {
-        loadChatMessages();
-    }
+    receiverConversation.updatedAt = new Date().toISOString();
+    saveConversation(receiverConversation);
 }
-
 // ==================== EDIT PROFILE ====================
 function openEditProfile() {
     const modal = createModal('✏️ Edit Profile');
@@ -3875,40 +3890,43 @@ window.setPriceAlert = setPriceAlert;
 window.viewUserProfile = viewUserProfile;
 
 // ==================== REAL-TIME MESSAGING SYSTEM ====================
+function startRealTimePolling() {
+    setInterval(() => {
+        if (currentTab === 'messages' && currentChat) {
+            loadChatMessages(); // Refresh current chat
+        }
+        loadMessagesTab(); // Refresh conversations list
+    }, 3000); // Poll every 3 seconds
+}
 function initializeRealTimeMessaging() {
-    // Simulate WebSocket connection for real-time messaging
+    // Check for new messages every 2 seconds
     setInterval(() => {
         checkForNewMessages();
-    }, 3000); // Check every 3 seconds for new messages
+    }, 2000);
 }
 
 function checkForNewMessages() {
     if (!currentUser) return;
     
-    // Get all chat keys for current user
-    const chatKeys = Object.keys(localStorage).filter(key => 
-        key.startsWith(`chat_${currentUser.id}_`) || key.includes(`_${currentUser.id}`)
-    );
+    // Get all conversations for current user
+    const conversations = getAllConversations();
     
     let hasNewMessages = false;
     
-    chatKeys.forEach(chatKey => {
-        const chatMessages = Storage.get(chatKey, []);
-        const lastMessage = chatMessages[chatMessages.length - 1];
+    conversations.forEach(conversation => {
+        const lastMessage = conversation.messages[conversation.messages.length - 1];
         
-        if (lastMessage && lastMessage.from !== currentUser.id && !lastMessage.read) {
+        // Check if last message is unread and from another user
+        if (lastMessage && lastMessage.senderId !== currentUser.id && !lastMessage.read) {
             hasNewMessages = true;
             
             // Mark as read
             lastMessage.read = true;
-            Storage.set(chatKey, chatMessages);
+            saveConversation(conversation);
             
-            // Show notification if user is not currently viewing the chat
-            if (currentTab !== 'messages' || currentChat?.id !== lastMessage.from) {
-                const sender = allUsers.find(u => u.id === lastMessage.from);
-                if (sender) {
-                    showNotification(`New message from ${sender.fullName}: ${lastMessage.message}`, 'info');
-                }
+            // Show notification if not viewing this chat
+            if (currentTab !== 'messages' || currentChat?.id !== conversation.otherUser.id) {
+                showNotification(`💬 New message from ${conversation.otherUser.fullName}`, 'info');
             }
         }
     });
@@ -3919,6 +3937,62 @@ function checkForNewMessages() {
     }
 }
 
+// NEW: Get all conversations for current user
+function getAllConversations() {
+    if (!currentUser) return [];
+    
+    const allConversations = Storage.get('allConversations', []);
+    return allConversations.filter(conv => 
+        conv.user1Id === currentUser.id || conv.user2Id === currentUser.id
+    );
+}
+
+// NEW: Save conversation to storage
+function saveConversation(conversation) {
+    const allConversations = Storage.get('allConversations', []);
+    const existingIndex = allConversations.findIndex(conv => conv.id === conversation.id);
+    
+    if (existingIndex !== -1) {
+        allConversations[existingIndex] = conversation;
+    } else {
+        allConversations.push(conversation);
+    }
+    
+    Storage.set('allConversations', allConversations);
+}
+
+// NEW: Get or create conversation between two users
+function getOrCreateConversation(user1Id, user2Id) {
+    const allConversations = Storage.get('allConversations', []);
+    
+    // Find existing conversation
+    let conversation = allConversations.find(conv => 
+        (conv.user1Id === user1Id && conv.user2Id === user2Id) ||
+        (conv.user1Id === user2Id && conv.user2Id === user1Id)
+    );
+    
+    if (!conversation) {
+        // Create new conversation
+        const user1 = allUsers.find(u => u.id === user1Id);
+        const user2 = allUsers.find(u => u.id === user2Id);
+        
+        conversation = {
+            id: `conv_${user1Id}_${user2Id}`,
+            user1Id,
+            user2Id,
+            user1,
+            user2,
+            messages: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        
+        allConversations.push(conversation);
+        Storage.set('allConversations', allConversations);
+    }
+    
+    return conversation;
+}
 // ==================== PRODUCT SYNC SYSTEM ====================
 function initializeProductSync() {
     setInterval(() => {
@@ -4320,40 +4394,37 @@ function checkPriceAlerts() {
 // ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', function() {
     console.log('SmartXCrop App Initialized');
-    
-    // Check authentication
-    const savedUser = Storage.get('currentUser');
-    const savedToken = Storage.get('authToken');
-    
-    if (savedUser && savedToken) {
-        currentUser = savedUser;
-        authToken = savedToken;
-        
-        // Initialize demo data if no products exist
-        if (Storage.get('allProducts', []).length === 0) {
-            loadDemoData();
-        }
-        
-        loadAppData();
-        initializeWebSocket();
-        document.getElementById('authScreen').classList.add('hidden');
-        document.getElementById('appScreen').classList.remove('hidden');
-    } else {
-        document.getElementById('authScreen').classList.remove('hidden');
-        document.getElementById('appScreen').classList.add('hidden');
-        loadDemoData(); // Initialize demo data for signup
-    }
-    // ==================== CLEANUP ON UNLOAD ====================
-window.addEventListener('beforeunload', function() {
-    if (priceUpdateInterval) {
-        clearInterval(priceUpdateInterval);
-    }
-});
 
-    // Initialize with feed tab
-    switchTab('feed');
+// Add dynamic styles
+addDynamicStyles();
+
+// Check authentication
+const savedUser = Storage.get('currentUser');
+const savedToken = Storage.get('authToken');
+
+if (savedUser && savedToken) {
+    currentUser = savedUser;
+    authToken = savedToken;
     
-    console.log('✅ All global functions initialized successfully');
+    // Initialize demo data if no products exist
+    if (Storage.get('allProducts', []).length === 0) {
+        loadDemoData();
+    }
+    
+    loadAppData();
+    initializeWebSocket();
+    document.getElementById('authScreen').classList.add('hidden');
+    document.getElementById('appScreen').classList.remove('hidden');
+} else {
+    document.getElementById('authScreen').classList.remove('hidden');
+    document.getElementById('appScreen').classlassList.add('hidden');
+    loadDemoData(); // Initialize demo data for signup
+}
+
+// Initialize with feed tab
+switchTab('feed');
+
+console.log('✅ All features initialized successfully');
 });
 // ==================== ADDITIONAL CSS FOR NEW FEATURES ====================
 function addDynamicStyles() {
