@@ -4783,38 +4783,409 @@ function handleNotificationAction(notificationId, actionType) {
             break;
     }
 }
+// ==================== SMART FARM SYSTEM ====================
+let soilMoistureChart = null;
+let farmDataInterval = null;
+let autoIrrigationEnabled = false;
+let moistureThreshold = 30;
+let isESP32Connected = false;
 
-// Helper functions
-function getNotificationIcon(type) {
-    const icons = {
-        'message': '💬',
-        'price-alert': '🚨',
-        'new-product': '🆕',
-        'system': 'ℹ️'
-    };
-    return icons[type] || '🔔';
-}
-
-function formatNotificationTime(timestamp) {
-    const now = new Date();
-    const notificationTime = new Date(timestamp);
-    const diffMs = now - notificationTime;
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMs / 3600000);
-    const diffDays = Math.floor(diffMs / 86400000);
+// Initialize farm system
+function initializeFarmSystem() {
+    console.log('🌱 Initializing farm system...');
+    loadFarmData();
+    startRealTimeUpdates();
+    loadWeatherData();
     
-    if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return notificationTime.toLocaleDateString();
+    // Start checking for ESP32 connection
+    checkESP32Connection();
 }
 
-// Check for new notifications
-function checkForNotifications() {
-    // This would check for new messages, price alerts, etc.
-    // For now, we'll rely on other systems to call addNotification()
+// Check ESP32 connection status
+async function checkESP32Connection() {
+    try {
+        const response = await fetch('http://localhost:3001/api/soil-data/user_001?hours=1');
+        const data = await response.json();
+        
+        if (data.success && data.data.length > 0) {
+            isESP32Connected = true;
+            updateConnectionStatus(true);
+        } else {
+            isESP32Connected = false;
+            updateConnectionStatus(false);
+        }
+    } catch (error) {
+        console.log('ESP32 not connected yet');
+        isESP32Connected = false;
+        updateConnectionStatus(false);
+    }
 }
+
+// Update connection status display
+function updateConnectionStatus(connected) {
+    const statusElement = document.getElementById('esp32Status');
+    if (!statusElement) return;
+    
+    if (connected) {
+        statusElement.className = 'status-item connected';
+        statusElement.innerHTML = '<i class="fas fa-wifi"></i><span>ESP32: Connected</span>';
+    } else {
+        statusElement.className = 'status-item disconnected';
+        statusElement.innerHTML = '<i class="fas fa-wifi"></i><span>ESP32: Disconnected</span>';
+    }
+}
+
+// Load farm data from local server
+async function loadFarmData() {
+    try {
+        console.log('📡 Loading farm data from server...');
+        const response = await fetch('http://localhost:3001/api/soil-data/user_001?hours=24');
+        const data = await response.json();
+        
+        console.log('📊 Farm data response:', data);
+        
+        if (data.success && data.data.length > 0) {
+            updateFarmDisplay(data.data);
+            updateSoilChart(data.data);
+            isESP32Connected = true;
+            updateConnectionStatus(true);
+        } else {
+            console.log('No farm data available');
+            // Use simulated data for testing
+            useSimulatedData();
+        }
+        
+    } catch (error) {
+        console.error('❌ Error loading farm data:', error);
+        useSimulatedData();
+    }
+}
+
+// Update farm display with real data
+function updateFarmDisplay(soilData) {
+    if (!soilData || soilData.length === 0) {
+        console.log('No soil data to display');
+        return;
+    }
+    
+    const latestData = soilData[soilData.length - 1];
+    console.log('🔄 Updating farm display with:', latestData);
+    
+    // Update sensor slot 1 with real data
+    const moistureElement = document.getElementById('soilMoisture1');
+    const tempElement = document.getElementById('soilTemp1');
+    const moistureBar = document.getElementById('moistureBar1');
+    
+    if (moistureElement) {
+        moistureElement.textContent = `${latestData.soilMoisture}%`;
+        moistureElement.style.color = getMoistureColor(latestData.soilMoisture);
+    }
+    
+    if (tempElement) {
+        tempElement.textContent = `${latestData.temperature || 25}°C`;
+    }
+    
+    if (moistureBar) {
+        moistureBar.style.width = `${latestData.soilMoisture}%`;
+        moistureBar.style.backgroundColor = getMoistureColor(latestData.soilMoisture);
+        moistureBar.style.transition = 'width 0.5s ease';
+    }
+    
+    // Update last update time
+    const lastUpdateElement = document.getElementById('lastUpdate');
+    if (lastUpdateElement) {
+        lastUpdateElement.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+    }
+    
+    // Update auto irrigation toggle
+    const toggle = document.getElementById('autoIrrigationToggle');
+    if (toggle) {
+        autoIrrigationEnabled = latestData.autoIrrigation || false;
+        toggle.checked = autoIrrigationEnabled;
+    }
+    
+    // Check if irrigation is needed
+    if (autoIrrigationEnabled) {
+        checkIrrigationNeed(latestData.soilMoisture);
+    }
+    
+    console.log('✅ Farm display updated successfully');
+}
+
+// Update soil moisture chart
+function updateSoilChart(soilData) {
+    const ctx = document.getElementById('soilMoistureChart');
+    if (!ctx) {
+        console.log('Chart canvas not found');
+        return;
+    }
+    
+    // Sort data by timestamp
+    const sortedData = [...soilData].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    
+    const labels = sortedData.map(data => {
+        const date = new Date(data.timestamp);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    });
+    
+    const moistureLevels = sortedData.map(data => data.soilMoisture);
+    
+    console.log('📈 Updating chart with data points:', moistureLevels.length);
+    
+    // Destroy existing chart
+    if (soilMoistureChart) {
+        soilMoistureChart.destroy();
+    }
+    
+    // Create new chart
+    soilMoistureChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Soil Moisture %',
+                data: moistureLevels,
+                borderColor: '#27AE60',
+                backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4,
+                pointBackgroundColor: '#27AE60',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2,
+                pointRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Soil Moisture History (Last 24 Hours)',
+                    font: { size: 16 }
+                },
+                legend: {
+                    display: true
+                }
+            },
+            scales: {
+                y: {
+                    min: 0,
+                    max: 100,
+                    title: {
+                        display: true,
+                        text: 'Moisture %'
+                    },
+                    grid: {
+                        color: 'rgba(0,0,0,0.1)'
+                    }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Time'
+                    },
+                    grid: {
+                        color: 'rgba(0,0,0,0.1)'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Use simulated data when real data isn't available
+function useSimulatedData() {
+    console.log('🎮 Using simulated farm data');
+    
+    const simulatedData = [{
+        deviceId: "esp32_farm_001",
+        userId: "user_001", 
+        soilMoisture: Math.floor(Math.random() * 30) + 35, // 35-65%
+        temperature: 25 + Math.floor(Math.random() * 10), // 25-35°C
+        humidity: 50 + Math.floor(Math.random() * 20), // 50-70%
+        autoIrrigation: autoIrrigationEnabled,
+        sensorSlot: 1,
+        timestamp: new Date().toISOString()
+    }];
+    
+    updateFarmDisplay(simulatedData);
+    updateSoilChart(simulatedData);
+}
+
+// Start real-time updates
+function startRealTimeUpdates() {
+    // Clear existing interval
+    if (farmDataInterval) {
+        clearInterval(farmDataInterval);
+    }
+    
+    // Update every 10 seconds
+    farmDataInterval = setInterval(() => {
+        if (document.getElementById('myFarmTab') && !document.getElementById('myFarmTab').classList.contains('hidden')) {
+            loadFarmData();
+        }
+    }, 10000);
+    
+    console.log('🔄 Farm data updates started (10s interval)');
+}
+
+// Toggle auto irrigation
+async function toggleAutoIrrigation() {
+    const toggle = document.getElementById('autoIrrigationToggle');
+    autoIrrigationEnabled = toggle.checked;
+    
+    console.log('💧 Auto irrigation:', autoIrrigationEnabled ? 'ON' : 'OFF');
+    
+    try {
+        const response = await fetch('http://localhost:3001/api/auto-irrigation', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                userId: 'user_001',
+                enabled: autoIrrigationEnabled,
+                threshold: moistureThreshold
+            })
+        });
+        
+        const data = await response.json();
+        console.log('✅ Irrigation settings updated:', data);
+        
+        showNotification(`Auto irrigation ${autoIrrigationEnabled ? 'enabled' : 'disabled'}`, 'success');
+        
+    } catch (error) {
+        console.error('❌ Error updating irrigation:', error);
+        showNotification('Failed to update irrigation settings', 'error');
+        toggle.checked = !autoIrrigationEnabled; // Revert toggle
+    }
+}
+
+// Update moisture threshold
+function updateThreshold(value) {
+    moistureThreshold = parseInt(value);
+    const thresholdElement = document.getElementById('thresholdValue');
+    if (thresholdElement) {
+        thresholdElement.textContent = `${value}%`;
+    }
+    console.log('🎚️ Moisture threshold updated:', moistureThreshold + '%');
+}
+
+// Manual irrigation
+async function manualIrrigation() {
+    console.log('🚰 Manual irrigation requested');
+    showNotification('Starting manual irrigation...', 'info');
+    
+    try {
+        // Simulate irrigation (in real setup, this would call ESP32)
+        setTimeout(() => {
+            showNotification('Irrigation completed successfully', 'success');
+        }, 3000);
+        
+    } catch (error) {
+        console.error('Error starting irrigation:', error);
+        showNotification('Failed to start irrigation', 'error');
+    }
+}
+
+// Smart irrigation logic
+function checkIrrigationNeed(currentMoisture) {
+    if (!autoIrrigationEnabled) return;
+    
+    console.log(`💧 Checking irrigation need: ${currentMoisture}% vs threshold: ${moistureThreshold}%`);
+    
+    if (currentMoisture < moistureThreshold) {
+        console.log('🚰 Soil is dry! Triggering auto irrigation...');
+        triggerAutoIrrigation();
+    }
+}
+
+function triggerAutoIrrigation() {
+    showNotification('🌱 Soil is dry! Starting auto irrigation...', 'warning');
+    manualIrrigation();
+}
+
+// Get color based on moisture level
+function getMoistureColor(moisture) {
+    if (moisture < 30) return '#e74c3c'; // Red - dry
+    if (moisture < 70) return '#27AE60'; // Green - ideal  
+    return '#3498db'; // Blue - wet
+}
+
+// Add new sensor slot
+function addSensorSlot(slotNumber) {
+    showNotification(`Adding sensor slot ${slotNumber}...`, 'info');
+    console.log(`➕ Adding sensor slot ${slotNumber}`);
+}
+
+// Load weather data
+async function loadWeatherData() {
+    try {
+        const weatherDiv = document.getElementById('weatherData');
+        if (!weatherDiv) return;
+        
+        // For now, use simulated weather data
+        const weatherData = {
+            temp: 28,
+            humidity: 65,
+            description: 'Partly cloudy',
+            icon: '02d'
+        };
+        
+        displayWeatherData(weatherData);
+        
+    } catch (error) {
+        console.error('Error loading weather data:', error);
+        document.getElementById('weatherData').innerHTML = `
+            <div class="weather-error">Weather data unavailable</div>
+        `;
+    }
+}
+
+function displayWeatherData(weather) {
+    const weatherDiv = document.getElementById('weatherData');
+    
+    weatherDiv.innerHTML = `
+        <div class="weather-current">
+            <div class="weather-main">
+                <div style="font-size: 32px;">🌤️</div>
+                <div>
+                    <div class="weather-temp">${weather.temp}°C</div>
+                    <div class="weather-desc">${weather.description}</div>
+                </div>
+            </div>
+            <div class="weather-details">
+                <div class="weather-item">
+                    <i class="fas fa-tint"></i>
+                    <span>Humidity: ${weather.humidity}%</span>
+                </div>
+                <div class="weather-item">
+                    <i class="fas fa-wind"></i>
+                    <span>Wind: 12 km/h</span>
+                </div>
+                <div class="weather-item">
+                    <i class="fas fa-cloud-rain"></i>
+                    <span>Rain: 0mm</span>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Update the switchTab function to initialize farm when opened
+const originalSwitchTab = window.switchTab;
+window.switchTab = function(tabName) {
+    originalSwitchTab(tabName);
+    
+    if (tabName === 'myFarm') {
+        console.log('🌱 My Farm tab opened - initializing farm system');
+        setTimeout(() => {
+            initializeFarmSystem();
+        }, 100);
+    }
+};
 // ==================== INITIALIZATION ====================
 
 document.addEventListener('DOMContentLoaded', function() {
