@@ -1,11 +1,6 @@
-// server.js - Updated imports
 const express = require('express');
-const mongoose = require('mongoose');
-const cors = require('cors');
-
-const app = express();
-
 const http = require('http');
+const cors = require('cors');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -14,37 +9,15 @@ const axios = require('axios');
 const WebSocket = require('ws');
 require('dotenv').config();
 
-// Import routes
-const authRoutes = require('./routes/auth');
-const productRoutes = require('./routes/products');
-const soilRoutes = require('./routes/soilRoutes');
-
-// Middleware
-app.use(cors());
-app.use(express.json());
-
-// routes/soilRoutes.js
-const router = express.Router();
-const SoilData = require('./models/SoilData');
+const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
-
-// Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/products', productRoutes);
-app.use('/api', soilRoutes);  // Soil routes
 
 app.use(cors({
   origin: true,
   credentials: true
 }));
-// Add CORS for ESP32 (important!)
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  next();
-});
+
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'frontend')));
@@ -63,91 +36,6 @@ let orders = [];
 let farmerStatus = [];
 let onlineUsers = new Map();
 let conversations = {};
-// Store soil data from ESP32
-router.post('/soil-data', async (req, res) => {
-  try {
-    const { deviceId, soilMoisture, temperature, humidity, autoIrrigation, sensorSlot } = req.body;
-    
-    // Save to database
-    const soilData = new SoilData({
-      deviceId,
-      soilMoisture,
-      temperature,
-      humidity,
-      autoIrrigation,
-      sensorSlot: sensorSlot || 1,
-      timestamp: new Date()
-    });
-    
-    await soilData.save();
-    
-    // Check if irrigation is needed
-    const shouldIrrigate = await checkIrrigationNeed(soilMoisture, autoIrrigation);
-    
-    res.json({
-      success: true,
-      irrigationCommand: shouldIrrigate,
-      autoIrrigation: autoIrrigation
-    });
-    
-  } catch (error) {
-    console.error('Error saving soil data:', error);
-    res.status(500).json({ success: false, error: 'Server error' });
-  }
-});
-// Get soil data for user
-router.get('/soil-data/:userId', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { hours = 24 } = req.query;
-    
-    const timeAgo = new Date(Date.now() - hours * 60 * 60 * 1000);
-    
-    const soilData = await SoilData.find({
-      deviceId: `esp32_farm_${userId}`,
-      timestamp: { $gte: timeAgo }
-    }).sort({ timestamp: 1 });
-    
-    res.json({ success: true, data: soilData });
-    
-  } catch (error) {
-    console.error('Error fetching soil data:', error);
-    res.status(500).json({ success: false, error: 'Server error' });
-  }
-});
-// Update auto irrigation setting
-router.post('/auto-irrigation', async (req, res) => {
-  try {
-    const { userId, enabled, threshold } = req.body;
-    
-    // Store in database or send to ESP32
-    // You can implement MQTT or WebSocket for real-time control
-    
-    res.json({ success: true, message: `Auto irrigation ${enabled ? 'enabled' : 'disabled'}` });
-    
-  } catch (error) {
-    console.error('Error updating irrigation:', error);
-    res.status(500).json({ success: false, error: 'Server error' });
-  }
-});
-
-// Smart irrigation logic
-async function checkIrrigationNeed(soilMoisture, autoIrrigation) {
-  if (!autoIrrigation) return false;
-  
-  // Smart logic based on soil moisture
-  if (soilMoisture < 30) {
-    // Soil is dry - need irrigation
-    return true;
-  } else if (soilMoisture > 80) {
-    // Soil is too wet - no irrigation
-    return false;
-  }
-  
-  return false;
-}
-
-module.exports = router;
 
 // Real-time WebSocket
 wss.on('connection', (ws, req) => {
@@ -1169,12 +1057,7 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
 });
 
-// Start server
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
-
 server.listen(PORT, '0.0.0.0', () => {
   console.log('🚀 SmartXCrop Full Stack App running on http://localhost:' + PORT);
   console.log('✅ Real AI Features: Plant ID & Crop Health Analysis');
