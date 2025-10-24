@@ -1,4 +1,18 @@
 // ==================== STORAGE HELPER ====================
+// Debug function to check product storage
+function debugProducts() {
+    console.log('=== PRODUCT DEBUG INFO ===');
+    console.log('allProducts array:', allProducts);
+    console.log('LocalStorage products:', Storage.get('allProducts', []));
+    console.log('Current user products:', allProducts.filter(p => p.seller?.id === currentUser?.id));
+    
+    const stored = Storage.get('allProducts', []);
+    if (stored.length !== allProducts.length) {
+        console.error('❌ MISMATCH: Storage has', stored.length, 'but allProducts has', allProducts.length);
+    } else {
+        console.log('✅ Storage and array match');
+    }
+}
 const Storage = {
     get(key, defaultValue = null) {
         try {
@@ -1297,24 +1311,32 @@ async function loadAppData() {
     try {
         showLoading('Loading app data...');
         
-        // Load products from backend with error handling
-        let productsData;
-        try {
-            productsData = await apiService.get('/products');
-            allProducts = productsData;
-            Storage.set('allProducts', allProducts);
-        } catch (error) {
-            console.warn('Failed to load products from API, using demo data:', error);
-            allProducts = Storage.get('allProducts', []);
+        // Load products from localStorage FIRST
+        let storedProducts = Storage.get('allProducts', []);
+        console.log('Loaded products from storage:', storedProducts);
+        
+        // If we have stored products, use them
+        if (storedProducts && storedProducts.length > 0) {
+            allProducts = storedProducts;
+        } else {
+            // Otherwise try API or load demo data
+            try {
+                const productsData = await apiService.get('/products');
+                allProducts = productsData;
+                Storage.set('allProducts', allProducts);
+            } catch (error) {
+                console.warn('Failed to load products from API, using demo data:', error);
+                await loadDemoData();
+            }
         }
         
-        // Load users from backend with error handling
+        // Load users
         let usersData;
         try {
             usersData = await apiService.get('/users');
             allUsers = usersData;
         } catch (error) {
-            console.warn('Failed to load users from API, using demo data:', error);
+            console.warn('Failed to load users from API:', error);
             // Ensure current user is in the users list
             if (currentUser && !allUsers.some(u => u.id === currentUser.id)) {
                 allUsers.push(currentUser);
@@ -1325,13 +1347,15 @@ async function loadAppData() {
         initializeRealTimeMessaging();
         initializeProductSync();
         
+        // Update ALL displays
         displayProducts(allProducts);
         updateProfile();
         loadMyProducts();
+        updateProfileStats(); // UPDATE STATS HERE TOO
         updateHeaderWithCart();
         updateCartBadge();
         
-        console.log('App data loaded successfully');
+        console.log('App data loaded successfully. Total products:', allProducts.length);
         
     } catch (error) {
         console.error('Failed to load app data:', error);
@@ -1341,8 +1365,8 @@ async function loadAppData() {
         hideLoading();
     }
 }
-
 async function loadDemoData() {
+console.log('Loading demo data...');
     // Fallback demo data if API fails
     if (allUsers.length === 0) {
         allUsers = [
@@ -1416,6 +1440,7 @@ async function loadDemoData() {
             }
         ];
         Storage.set('allProducts', allProducts);
+	console.log('Demo data saved to storage');
         displayProducts(allProducts);
     }
 }
@@ -1591,19 +1616,27 @@ function openNegotiate(productId) {
                         <span id="summaryQuantity">1 kg</span>
                     </div>
                     <div class="summary-item">
+                        <span>Original Price:</span>
+                        <span id="summaryOriginalPrice">₱${product.pricePerKg.toFixed(2)}/kg</span>
+                    </div>
+                    <div class="summary-item">
                         <span>Offered Price:</span>
                         <span id="summaryPrice">₱${(product.pricePerKg * 0.9).toFixed(2)}/kg</span>
+                    </div>
+                    <div class="summary-item">
+                        <span>Price Difference:</span>
+                        <span id="summaryPriceDiff">-₱${(product.pricePerKg * 0.1).toFixed(2)}/kg</span>
                     </div>
                     <div class="summary-item">
                         <span>Original Total:</span>
                         <span id="summaryOriginalTotal">₱${product.pricePerKg.toFixed(2)}</span>
                     </div>
                     <div class="summary-item savings">
-                        <span>Amount Saved:</span>
+                        <span>Total Amount Saved:</span>
                         <span id="summarySavings">₱${(product.pricePerKg * 0.1).toFixed(2)}</span>
                     </div>
                     <div class="summary-item total">
-                        <span>Total Amount:</span>
+                        <span>Final Total Amount:</span>
                         <span id="summaryTotal">₱${(product.pricePerKg * 0.9).toFixed(2)}</span>
                     </div>
                 </div>
@@ -1621,16 +1654,58 @@ function openNegotiate(productId) {
     document.getElementById('negotiateQuantity').addEventListener('input', updateNegotiationSummary);
     
     function updateNegotiationSummary() {
-        const price = parseFloat(document.getElementById('negotiatePrice').value) || 0;
+        const originalPricePerKg = product.pricePerKg;
+        const offeredPricePerKg = parseFloat(document.getElementById('negotiatePrice').value) || 0;
         const quantity = parseInt(document.getElementById('negotiateQuantity').value) || 0;
-        const total = price * quantity;
         
+        // Calculate totals
+        const originalTotal = originalPricePerKg * quantity;
+        const offeredTotal = offeredPricePerKg * quantity;
+        
+        // Calculate savings
+        const priceDiffPerKg = originalPricePerKg - offeredPricePerKg;
+        const totalSavings = originalTotal - offeredTotal;
+        
+        // Update the display
         document.getElementById('summaryQuantity').textContent = `${quantity} kg`;
-        document.getElementById('summaryPrice').textContent = `₱${price.toFixed(2)}/kg`;
-        document.getElementById('summaryTotal').textContent = `₱${total.toFixed(2)}`;
+        document.getElementById('summaryOriginalPrice').textContent = `₱${originalPricePerKg.toFixed(2)}/kg`;
+        document.getElementById('summaryPrice').textContent = `₱${offeredPricePerKg.toFixed(2)}/kg`;
+        document.getElementById('summaryPriceDiff').textContent = `${priceDiffPerKg >= 0 ? '-' : '+'}₱${Math.abs(priceDiffPerKg).toFixed(2)}/kg`;
+        document.getElementById('summaryOriginalTotal').textContent = `₱${originalTotal.toFixed(2)}`;
+        document.getElementById('summarySavings').textContent = `₱${totalSavings.toFixed(2)}`;
+        document.getElementById('summaryTotal').textContent = `₱${offeredTotal.toFixed(2)}`;
+        
+        // Color coding for savings
+        const savingsElement = document.getElementById('summarySavings');
+        const priceDiffElement = document.getElementById('summaryPriceDiff');
+        
+        if (totalSavings > 0) {
+            savingsElement.style.color = '#27AE60';
+            savingsElement.innerHTML = `₱${totalSavings.toFixed(2)} <small>(You save!)</small>`;
+            priceDiffElement.style.color = '#27AE60';
+        } else if (totalSavings < 0) {
+            savingsElement.style.color = '#e74c3c';
+            savingsElement.innerHTML = `-₱${Math.abs(totalSavings).toFixed(2)} <small>(You pay more!)</small>`;
+            priceDiffElement.style.color = '#e74c3c';
+        } else {
+            savingsElement.style.color = '#666';
+            savingsElement.textContent = `₱${totalSavings.toFixed(2)}`;
+            priceDiffElement.style.color = '#666';
+        }
+        
+        // Color for price difference
+        if (priceDiffPerKg > 0) {
+            priceDiffElement.style.color = '#27AE60';
+        } else if (priceDiffPerKg < 0) {
+            priceDiffElement.style.color = '#e74c3c';
+        } else {
+            priceDiffElement.style.color = '#666';
+        }
     }
+    
+    // Initial calculation
+    updateNegotiationSummary();
 }
-
 function submitNegotiation(event, productId) {
     event.preventDefault();
     
@@ -2498,36 +2573,45 @@ function loadMessagesTab() {
     const messagesTab = document.getElementById('messagesTab');
     if (!messagesTab) return;
     
-    // Get other users (excluding current user)
-    const otherUsers = allUsers.filter(user => user.id !== currentUser?.id);
-    
-    // Get conversations with last messages
-    const conversations = getConversationsWithLastMessages();
+    const conversations = getAllConversations();
     
     messagesTab.innerHTML = `
         <div class="profile-section">
             <div class="section-header">
-                <h3>💬 Recent Conversations</h3>
+                <h3>💬 Real-Time Chat</h3>
                 <button class="btn btn-primary btn-small" onclick="showUserSelectionModal()">
                     <i class="fas fa-plus"></i> New Chat
                 </button>
             </div>
             <div class="conversations-list" id="conversationsList">
-                ${conversations.length > 0 ? conversations.map(conv => `
-                    <div class="conversation-item" onclick="selectChatUser('${conv.userId}')">
-                        <div class="user-avatar-small">
-                            ${conv.user.avatar || '👤'}
+                ${conversations.length > 0 ? conversations.map(conv => {
+                    const otherUser = getOtherUserFromConversation(conv);
+                    const lastMessage = conv.messages[conv.messages.length - 1];
+                    const unreadCount = getUnreadMessageCount(conv);
+                    
+                    return `
+                        <div class="conversation-item" onclick="selectChatUser('${otherUser.id}')">
+                            <div class="user-avatar-small">
+                                ${otherUser.avatar || '👤'}
+                            </div>
+                            <div class="conversation-info">
+                                <strong>${otherUser.fullName}</strong>
+                                <p class="conversation-last-message">
+                                    ${lastMessage ? 
+                                        `${lastMessage.senderId === currentUser.id ? 'You: ' : ''}${lastMessage.message}` 
+                                        : 'Start a conversation...'
+                                    }
+                                </p>
+                            </div>
+                            <div class="conversation-time">
+                                ${lastMessage ? formatMessageTime(lastMessage.timestamp) : 'New'}
+                            </div>
+                            ${unreadCount > 0 ? `
+                                <div class="unread-badge">${unreadCount}</div>
+                            ` : ''}
                         </div>
-                        <div class="conversation-info">
-                            <strong>${conv.user.fullName}</strong>
-                            <p class="conversation-last-message">${conv.lastMessage}</p>
-                        </div>
-                        <div class="conversation-time">
-                            ${conv.lastMessageTime}
-                        </div>
-                        ${conv.unread ? '<div class="unread-badge"></div>' : ''}
-                    </div>
-                `).join('') : `
+                    `;
+                }).join('') : `
                     <div class="no-conversations">
                         <i class="fas fa-comments" style="font-size: 48px; margin-bottom: 16px;"></i>
                         <p>No conversations yet</p>
@@ -2539,6 +2623,16 @@ function loadMessagesTab() {
     `;
 }
 
+// NEW: Helper functions
+function getOtherUserFromConversation(conversation) {
+    return conversation.user1Id === currentUser.id ? conversation.user2 : conversation.user1;
+}
+
+function getUnreadMessageCount(conversation) {
+    return conversation.messages.filter(msg => 
+        msg.senderId !== currentUser.id && !msg.read
+    ).length;
+}
 function getConversationsWithLastMessages() {
     if (!currentUser) return [];
     
@@ -2629,9 +2723,10 @@ function switchTab(tabName) {
             setTimeout(() => initializePriceMonitoring(), 100);
             break;
         case 'profile':
-            updateProfile();
-            loadMyProducts();
-            break;
+    		updateProfile();
+    		loadMyProducts();
+    		updateProfileStats(); // ADD THIS LINE
+    		break;
         case 'agroInputs':
             loadAgroInputsTab();
             break;
@@ -2742,30 +2837,34 @@ function filterUsers() {
 function loadChatMessages() {
     if (!currentChat || !currentUser) return;
     
-    const chatKey = `chat_${currentUser.id}_${currentChat.id}`;
-    const chatMessages = Storage.get(chatKey, []);
-    
+    const conversation = getOrCreateConversation(currentUser.id, currentChat.id);
     const chatMessagesDiv = document.getElementById('chatMessages');
     if (!chatMessagesDiv) return;
     
-    if (chatMessages.length === 0) {
+    if (conversation.messages.length === 0) {
         chatMessagesDiv.innerHTML = `
             <div class="message system-message">
                 <div class="message-content">
                     <strong>Chat started with ${currentChat.fullName}</strong><br>
-                    <small>You can now send messages to each other</small>
+                    <small>You can now send real messages to each other</small>
                 </div>
             </div>
         `;
     } else {
-        chatMessagesDiv.innerHTML = chatMessages.map(msg => {
-            const isMe = msg.from === currentUser.id;
+        chatMessagesDiv.innerHTML = conversation.messages.map(msg => {
+            const isMe = msg.senderId === currentUser.id;
             const time = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            
+            // Mark as read when viewing
+            if (!isMe && !msg.read) {
+                msg.read = true;
+                saveConversation(conversation);
+            }
             
             return `
                 <div class="message ${isMe ? 'sent' : 'received'}">
                     <div class="message-content">${msg.message}</div>
-                    <div class="message-time">${time}</div>
+                    <div class="message-time">${time} ${isMe ? '✓' : ''}</div>
                 </div>
             `;
         }).join('');
@@ -2773,7 +2872,6 @@ function loadChatMessages() {
     
     chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
 }
-
 function handleChatKeyPress(event) {
     if (event.key === 'Enter') {
         sendChatMessage();
@@ -2786,53 +2884,47 @@ function sendChatMessage() {
     
     if (!message || !currentChat || !currentUser) return;
     
-    const chatKey = `chat_${currentUser.id}_${currentChat.id}`;
-    const chatMessages = Storage.get(chatKey, []);
+    // Get or create conversation
+    const conversation = getOrCreateConversation(currentUser.id, currentChat.id);
     
-    // Add user message
-    chatMessages.push({
+    // Add message to conversation
+    const newMessage = {
+        id: 'msg_' + Date.now(),
+        senderId: currentUser.id,
+        receiverId: currentChat.id,
         message: message,
         timestamp: new Date().toISOString(),
-        from: currentUser.id
-    });
+        read: false
+    };
     
-    Storage.set(chatKey, chatMessages);
+    conversation.messages.push(newMessage);
+    conversation.updatedAt = new Date().toISOString();
+    
+    // Save conversation
+    saveConversation(conversation);
     
     input.value = '';
     loadChatMessages();
     
-    // Simulate response after 2 seconds
-    setTimeout(() => {
-        simulateChatResponse();
-    }, 2000);
+    // NOTIFY THE OTHER USER (this would be real-time in a real app)
+    simulateMessageNotification(currentChat.id, newMessage);
+    
+    showNotification('Message sent!', 'success');
 }
 
-function simulateChatResponse() {
-    if (!currentChat) return;
+// NEW: Simulate message notification to other user
+function simulateMessageNotification(receiverId, message) {
+    // In a real app, this would be a push notification or WebSocket
+    console.log(`Message sent to user ${receiverId}: ${message.message}`);
     
-    const responses = [
-        "Thanks for your message! I'll get back to you soon.",
-        "I'm interested in your products. Can you tell me more?",
-        "When can I expect delivery?",
-        "Do you offer bulk discounts?"
-    ];
-    
-    const randomResponse = responses[Math.floor(Math.random() * responses.length)];
-    
-    const chatKey = `chat_${currentUser.id}_${currentChat.id}`;
-    const chatMessages = Storage.get(chatKey, []);
-    
-    chatMessages.push({
-        message: randomResponse,
-        timestamp: new Date().toISOString(),
-        from: currentChat.id
+    // Store the message for the receiver to see
+    const receiverConversation = getOrCreateConversation(receiverId, currentUser.id);
+    receiverConversation.messages.push({
+        ...message,
+        read: false // Mark as unread for receiver
     });
-    
-    Storage.set(chatKey, chatMessages);
-    
-    if (document.getElementById('chatMessages')) {
-        loadChatMessages();
-    }
+    receiverConversation.updatedAt = new Date().toISOString();
+    saveConversation(receiverConversation);
 }
 
 // ==================== EDIT PROFILE ====================
@@ -2993,31 +3085,44 @@ function saveNewProduct(event) {
     try {
         showLoading('Adding product...');
         
-        // Create product object
+        // Create product object with proper structure
         const newProduct = {
             id: 'prod_' + Date.now(),
             sellerId: currentUser.id,
-            title,
-            description,
+            title: title,
+            description: description,
             pricePerKg: price,
             category: category,
-            stock,
-            seller: currentUser,
+            stock: stock,
+            seller: {
+                id: currentUser.id,
+                fullName: currentUser.fullName,
+                region: currentUser.region,
+                avatar: currentUser.avatar
+            },
             image: null,
             rating: 0,
             reviewCount: 0,
             createdAt: new Date().toISOString()
         };
         
+        console.log('Adding new product:', newProduct);
+        
+        // Add to allProducts array
         allProducts.push(newProduct);
+        
+        // SAVE TO LOCALSTORAGE - THIS IS CRITICAL!
         Storage.set('allProducts', allProducts);
+        
+        console.log('Products after save:', allProducts);
         
         closeModal();
         showNotification('Product added successfully!', 'success');
         
-        // Refresh displays
+        // Refresh ALL displays
         displayProducts(allProducts);
         loadMyProducts();
+        updateProfileStats(); // Update stats
         
     } catch (error) {
         console.error('Add product error:', error);
@@ -3796,8 +3901,13 @@ function getUserName(userId) {
 
 // ==================== GLOBAL FUNCTION AVAILABILITY ====================
 // Make sure all functions are available in the global scope
+window.toggleNotificationWindow = toggleNotificationWindow;
+window.clearAllNotifications = clearAllNotifications;
+window.handleNotificationClick = handleNotificationClick;
+window.handleNotificationAction = handleNotificationAction;
 
 // Authentication Functions
+window.debugProducts = debugProducts;
 window.login = login;
 window.signup = signup;
 window.showSignup = showSignup;
@@ -3875,40 +3985,43 @@ window.setPriceAlert = setPriceAlert;
 window.viewUserProfile = viewUserProfile;
 
 // ==================== REAL-TIME MESSAGING SYSTEM ====================
+function startRealTimePolling() {
+    setInterval(() => {
+        if (currentTab === 'messages' && currentChat) {
+            loadChatMessages(); // Refresh current chat
+        }
+        loadMessagesTab(); // Refresh conversations list
+    }, 3000); // Poll every 3 seconds
+}
 function initializeRealTimeMessaging() {
-    // Simulate WebSocket connection for real-time messaging
+    // Check for new messages every 2 seconds
     setInterval(() => {
         checkForNewMessages();
-    }, 3000); // Check every 3 seconds for new messages
+    }, 2000);
 }
 
 function checkForNewMessages() {
     if (!currentUser) return;
     
-    // Get all chat keys for current user
-    const chatKeys = Object.keys(localStorage).filter(key => 
-        key.startsWith(`chat_${currentUser.id}_`) || key.includes(`_${currentUser.id}`)
-    );
+    // Get all conversations for current user
+    const conversations = getAllConversations();
     
     let hasNewMessages = false;
     
-    chatKeys.forEach(chatKey => {
-        const chatMessages = Storage.get(chatKey, []);
-        const lastMessage = chatMessages[chatMessages.length - 1];
+    conversations.forEach(conversation => {
+        const lastMessage = conversation.messages[conversation.messages.length - 1];
         
-        if (lastMessage && lastMessage.from !== currentUser.id && !lastMessage.read) {
+        // Check if last message is unread and from another user
+        if (lastMessage && lastMessage.senderId !== currentUser.id && !lastMessage.read) {
             hasNewMessages = true;
             
             // Mark as read
             lastMessage.read = true;
-            Storage.set(chatKey, chatMessages);
+            saveConversation(conversation);
             
-            // Show notification if user is not currently viewing the chat
-            if (currentTab !== 'messages' || currentChat?.id !== lastMessage.from) {
-                const sender = allUsers.find(u => u.id === lastMessage.from);
-                if (sender) {
-                    showNotification(`New message from ${sender.fullName}: ${lastMessage.message}`, 'info');
-                }
+            // Show notification if not viewing this chat
+            if (currentTab !== 'messages' || currentChat?.id !== conversation.otherUser.id) {
+                showNotification(`💬 New message from ${conversation.otherUser.fullName}`, 'info');
             }
         }
     });
@@ -3919,6 +4032,62 @@ function checkForNewMessages() {
     }
 }
 
+// NEW: Get all conversations for current user
+function getAllConversations() {
+    if (!currentUser) return [];
+    
+    const allConversations = Storage.get('allConversations', []);
+    return allConversations.filter(conv => 
+        conv.user1Id === currentUser.id || conv.user2Id === currentUser.id
+    );
+}
+
+// NEW: Save conversation to storage
+function saveConversation(conversation) {
+    const allConversations = Storage.get('allConversations', []);
+    const existingIndex = allConversations.findIndex(conv => conv.id === conversation.id);
+    
+    if (existingIndex !== -1) {
+        allConversations[existingIndex] = conversation;
+    } else {
+        allConversations.push(conversation);
+    }
+    
+    Storage.set('allConversations', allConversations);
+}
+
+// NEW: Get or create conversation between two users
+function getOrCreateConversation(user1Id, user2Id) {
+    const allConversations = Storage.get('allConversations', []);
+    
+    // Find existing conversation
+    let conversation = allConversations.find(conv => 
+        (conv.user1Id === user1Id && conv.user2Id === user2Id) ||
+        (conv.user1Id === user2Id && conv.user2Id === user1Id)
+    );
+    
+    if (!conversation) {
+        // Create new conversation
+        const user1 = allUsers.find(u => u.id === user1Id);
+        const user2 = allUsers.find(u => u.id === user2Id);
+        
+        conversation = {
+            id: `conv_${user1Id}_${user2Id}`,
+            user1Id,
+            user2Id,
+            user1,
+            user2,
+            messages: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        
+        allConversations.push(conversation);
+        Storage.set('allConversations', allConversations);
+    }
+    
+    return conversation;
+}
 // ==================== PRODUCT SYNC SYSTEM ====================
 function initializeProductSync() {
     setInterval(() => {
@@ -3941,7 +4110,20 @@ function syncNewProducts() {
     }
     
     Storage.set('lastProductSync', currentTime);
+ if (newProducts.length > 0) {
+        addNotification(
+            'New Products Available',
+            `${newProducts.length} new products have been added to the marketplace`,
+            'new-product',
+            [
+                { type: 'view', label: 'View Feed' },
+                { type: 'dismiss', label: 'Dismiss' }
+            ]
+        );
+    }
 }
+
+
 // ==================== VIEW USER PRODUCTS FUNCTION ====================
 function viewUserProducts(userId) {
     const user = allUsers.find(u => u.id === userId);
@@ -4308,50 +4490,792 @@ function checkPriceAlerts() {
             const avgPrice = relevantProducts.reduce((sum, p) => sum + p.pricePerKg, 0) / relevantProducts.length;
             
             if (avgPrice <= alert.price) {
-                showNotification(`🚨 Price Alert: ${alert.product} is now ₱${avgPrice.toFixed(2)} (below your alert of ₱${alert.price.toFixed(2)})`, 'warning');
+                addNotification(
+            'Price Alert Triggered!',
+            `${alert.product} is now ₱${avgPrice.toFixed(2)} (below your alert of ₱${alert.price.toFixed(2)})`,
+'warning');
                 alert.active = false; // Disable alert after triggering
+'price-alert',
+            [
+                { type: 'view', label: 'View Prices' },
+                { type: 'dismiss', label: 'Dismiss' }
+            ]
             }
         }
     });
     
     Storage.set('priceAlerts', alerts);
 }
+// ==================== PROFILE STATS UPDATER ====================
+function updateProfileStats() {
+    if (!currentUser) return;
+    
+    // Calculate user's products
+    const userProducts = allProducts.filter(product => 
+        product.seller?.id === currentUser.id
+    );
+    
+    // Calculate sales (simulated - in real app this would come from orders)
+    const salesCount = userProducts.reduce((total, product) => {
+        return total + (product.stock || 0); // Using stock as simulated sales
+    }, 0);
+    
+    // Calculate average rating
+    const totalRating = userProducts.reduce((sum, product) => sum + (product.rating || 0), 0);
+    const averageRating = userProducts.length > 0 ? (totalRating / userProducts.length).toFixed(1) : 0;
+    
+    // Calculate total reviews
+    const totalReviews = userProducts.reduce((sum, product) => sum + (product.reviewCount || 0), 0);
+    
+    // Update the DOM elements
+    const productsCountElement = document.getElementById('productsCount');
+    const salesCountElement = document.getElementById('salesCount');
+    const ratingScoreElement = document.getElementById('ratingScore');
+    const reviewsCountElement = document.getElementById('reviewsCount');
+    
+    if (productsCountElement) productsCountElement.textContent = userProducts.length;
+    if (salesCountElement) salesCountElement.textContent = salesCount;
+    if (ratingScoreElement) ratingScoreElement.textContent = averageRating;
+    if (reviewsCountElement) reviewsCountElement.textContent = totalReviews;
+    
+    console.log('Stats updated:', {
+        products: userProducts.length,
+        sales: salesCount,
+        rating: averageRating,
+        reviews: totalReviews
+    });
+}
+// ==================== NOTIFICATION SYSTEM ====================
+let notifications = Storage.get('notifications', []);
+let notificationWindowVisible = false;
 
-// ==================== INITIALIZATION ====================
-document.addEventListener('DOMContentLoaded', function() {
-    console.log('SmartXCrop App Initialized');
+// Initialize notification system
+function initializeNotificationSystem() {
+    updateNotificationBadge();
     
-    // Check authentication
-    const savedUser = Storage.get('currentUser');
-    const savedToken = Storage.get('authToken');
+    // Check for new notifications every 10 seconds
+    setInterval(() => {
+        checkForNotifications();
+    }, 10000);
+}
+
+// Toggle notification window
+function toggleNotificationWindow() {
+    const notificationWindow = document.getElementById('notificationWindow');
+    const notificationBadge = document.getElementById('notificationBadge');
     
-    if (savedUser && savedToken) {
-        currentUser = savedUser;
-        authToken = savedToken;
+    if (notificationWindowVisible) {
+        notificationWindow.classList.add('hidden');
+        notificationWindowVisible = false;
+    } else {
+        notificationWindow.classList.remove('hidden');
+        notificationWindowVisible = true;
         
-        // Initialize demo data if no products exist
-        if (Storage.get('allProducts', []).length === 0) {
-            loadDemoData();
+        // Mark all as read when opening
+        markAllNotificationsAsRead();
+        
+        // Load notifications
+        loadNotificationWindow();
+    }
+}
+
+// Load notifications into the window
+function loadNotificationWindow() {
+    const notificationList = document.getElementById('notificationList');
+    if (!notificationList) return;
+    
+    if (notifications.length === 0) {
+        notificationList.innerHTML = `
+            <div class="notification-item">
+                <div class="notification-item-icon">📭</div>
+                <div class="notification-item-content">
+                    <div class="notification-item-title">No notifications</div>
+                    <div class="notification-item-message">You're all caught up!</div>
+                </div>
+            </div>
+        `;
+        return;
+    }
+    
+    // Sort by timestamp (newest first)
+    const sortedNotifications = [...notifications].sort((a, b) => 
+        new Date(b.timestamp) - new Date(a.timestamp)
+    );
+    
+    notificationList.innerHTML = sortedNotifications.map(notification => `
+        <div class="notification-item ${notification.read ? '' : 'unread'} ${notification.type ? 'notification-' + notification.type : ''}" 
+             onclick="handleNotificationClick('${notification.id}')">
+            <div class="notification-item-icon">${getNotificationIcon(notification.type)}</div>
+            <div class="notification-item-content">
+                <div class="notification-item-title">${notification.title}</div>
+                <div class="notification-item-message">${notification.message}</div>
+                <div class="notification-item-time">${formatNotificationTime(notification.timestamp)}</div>
+                ${notification.actions ? `
+                    <div class="notification-item-actions">
+                        ${notification.actions.map(action => `
+                            <button class="btn-small" onclick="event.stopPropagation(); handleNotificationAction('${notification.id}', '${action.type}')">
+                                ${action.label}
+                            </button>
+                        `).join('')}
+                    </div>
+                ` : ''}
+            </div>
+        </div>
+    `).join('');
+}
+
+// Add a new notification
+function addNotification(title, message, type = 'system', actions = []) {
+    const newNotification = {
+        id: 'notif_' + Date.now(),
+        title,
+        message,
+        type,
+        read: false,
+        timestamp: new Date().toISOString(),
+        actions
+    };
+    
+    notifications.unshift(newNotification); // Add to beginning
+    
+    // Keep only last 50 notifications
+    if (notifications.length > 50) {
+        notifications = notifications.slice(0, 50);
+    }
+    
+    Storage.set('notifications', notifications);
+    updateNotificationBadge();
+    
+    // Show popup notification if window is closed
+    if (!notificationWindowVisible) {
+        showPopupNotification(newNotification);
+    }
+    
+    // Reload notification window if it's open
+    if (notificationWindowVisible) {
+        loadNotificationWindow();
+    }
+    
+    console.log('Notification added:', newNotification);
+}
+
+// Show popup notification (like toast)
+function showPopupNotification(notification) {
+    const popup = document.createElement('div');
+    popup.className = `notification-popup ${notification.type}`;
+    popup.innerHTML = `
+        <div class="notification-popup-content">
+            <div class="notification-popup-icon">${getNotificationIcon(notification.type)}</div>
+            <div>
+                <strong>${notification.title}</strong>
+                <p>${notification.message}</p>
+            </div>
+            <button onclick="this.parentElement.parentElement.remove()">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    `;
+    
+    document.body.appendChild(popup);
+    
+    // Auto remove after 5 seconds
+    setTimeout(() => {
+        if (popup.parentElement) {
+            popup.remove();
+        }
+    }, 5000);
+}
+
+// Update notification badge count
+function updateNotificationBadge() {
+    const badge = document.getElementById('notificationBadge');
+    if (!badge) return;
+    
+    const unreadCount = notifications.filter(n => !n.read).length;
+    
+    if (unreadCount > 0) {
+        badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+        badge.style.display = 'flex';
+    } else {
+        badge.style.display = 'none';
+    }
+}
+
+// Mark all notifications as read
+function markAllNotificationsAsRead() {
+    let updated = false;
+    
+    notifications.forEach(notification => {
+        if (!notification.read) {
+            notification.read = true;
+            updated = true;
+        }
+    });
+    
+    if (updated) {
+        Storage.set('notifications', notifications);
+        updateNotificationBadge();
+        loadNotificationWindow();
+    }
+}
+
+// Clear all notifications
+function clearAllNotifications() {
+    if (notifications.length === 0) return;
+    
+    if (confirm('Clear all notifications?')) {
+        notifications = [];
+        Storage.set('notifications', notifications);
+        updateNotificationBadge();
+        loadNotificationWindow();
+        showNotification('All notifications cleared', 'success');
+    }
+}
+
+// Handle notification click
+function handleNotificationClick(notificationId) {
+    const notification = notifications.find(n => n.id === notificationId);
+    if (!notification) return;
+    
+    // Mark as read
+    notification.read = true;
+    Storage.set('notifications', notifications);
+    updateNotificationBadge();
+    loadNotificationWindow();
+    
+    // Handle different notification types
+    switch (notification.type) {
+        case 'message':
+            // Open messages tab and select the user
+            if (notification.userId) {
+                switchTab('messages');
+                selectChatUser(notification.userId);
+            }
+            break;
+        case 'price-alert':
+            // Open price monitoring tab
+            switchTab('priceMonitoring');
+            break;
+        case 'new-product':
+            // Open feed tab
+            switchTab('feed');
+            break;
+    }
+    
+    // Close notification window after click
+    toggleNotificationWindow();
+}
+
+// Handle notification actions
+function handleNotificationAction(notificationId, actionType) {
+    const notification = notifications.find(n => n.id === notificationId);
+    if (!notification) return;
+    
+    switch (actionType) {
+        case 'view':
+            handleNotificationClick(notificationId);
+            break;
+        case 'dismiss':
+            notifications = notifications.filter(n => n.id !== notificationId);
+            Storage.set('notifications', notifications);
+            updateNotificationBadge();
+            loadNotificationWindow();
+            break;
+    }
+}
+// ==================== SMART FARM SYSTEM ====================
+let soilMoistureChart = null;
+let farmDataInterval = null;
+let autoIrrigationEnabled = false;
+let moistureThreshold = 30;
+let isESP32Connected = false;
+
+// Initialize farm system
+function initializeFarmSystem() {
+    console.log('🌱 Initializing farm system...');
+    loadFarmData();
+    startRealTimeUpdates();
+    loadWeatherData();
+    
+    // Start checking for ESP32 connection
+    checkESP32Connection();
+}
+
+// Check ESP32 connection status
+async function checkESP32Connection() {
+    try {
+        const response = await fetch('http://localhost:3001/api/soil-data/user_001?hours=1');
+        const data = await response.json();
+        
+        if (data.success && data.data.length > 0) {
+            isESP32Connected = true;
+            updateConnectionStatus(true);
+        } else {
+            isESP32Connected = false;
+            updateConnectionStatus(false);
+        }
+    } catch (error) {
+        console.log('ESP32 not connected yet');
+        isESP32Connected = false;
+        updateConnectionStatus(false);
+    }
+}
+
+// Update connection status display
+function updateConnectionStatus(connected) {
+    const statusElement = document.getElementById('esp32Status');
+    if (!statusElement) return;
+    
+    if (connected) {
+        statusElement.className = 'status-item connected';
+        statusElement.innerHTML = '<i class="fas fa-wifi"></i><span>ESP32: Connected</span>';
+    } else {
+        statusElement.className = 'status-item disconnected';
+        statusElement.innerHTML = '<i class="fas fa-wifi"></i><span>ESP32: Disconnected</span>';
+    }
+}
+
+// Load farm data from local server
+async function loadFarmData() {
+    try {
+        console.log('📡 Loading farm data from server...');
+        const response = await fetch('http://localhost:3001/api/soil-data/user_001?hours=24');
+        const data = await response.json();
+        
+        console.log('📊 Farm data response:', data);
+        
+        if (data.success && data.data.length > 0) {
+            updateFarmDisplay(data.data);
+            updateSoilChart(data.data);
+            isESP32Connected = true;
+            updateConnectionStatus(true);
+        } else {
+            console.log('No farm data available');
+            // Use simulated data for testing
+            useSimulatedData();
         }
         
-        loadAppData();
-        initializeWebSocket();
-        document.getElementById('authScreen').classList.add('hidden');
-        document.getElementById('appScreen').classList.remove('hidden');
-    } else {
-        document.getElementById('authScreen').classList.remove('hidden');
-        document.getElementById('appScreen').classList.add('hidden');
-        loadDemoData(); // Initialize demo data for signup
+    } catch (error) {
+        console.error('❌ Error loading farm data:', error);
+        useSimulatedData();
     }
-    // ==================== CLEANUP ON UNLOAD ====================
-window.addEventListener('beforeunload', function() {
-    if (priceUpdateInterval) {
-        clearInterval(priceUpdateInterval);
-    }
-});
+}
 
-    // Initialize with feed tab
-    switchTab('feed');
+// Update farm display with real data
+function updateFarmDisplay(soilData) {
+    if (!soilData || soilData.length === 0) {
+        console.log('No soil data to display');
+        return;
+    }
     
-    console.log('✅ All global functions initialized successfully');
+    const latestData = soilData[soilData.length - 1];
+    console.log('🔄 Updating farm display with:', latestData);
+    
+    // Update sensor slot 1 with real data
+    const moistureElement = document.getElementById('soilMoisture1');
+    const tempElement = document.getElementById('soilTemp1');
+    const moistureBar = document.getElementById('moistureBar1');
+    
+    if (moistureElement) {
+        moistureElement.textContent = `${latestData.soilMoisture}%`;
+        moistureElement.style.color = getMoistureColor(latestData.soilMoisture);
+    }
+    
+    if (tempElement) {
+        tempElement.textContent = `${latestData.temperature || 25}°C`;
+    }
+    
+    if (moistureBar) {
+        moistureBar.style.width = `${latestData.soilMoisture}%`;
+        moistureBar.style.backgroundColor = getMoistureColor(latestData.soilMoisture);
+        moistureBar.style.transition = 'width 0.5s ease';
+    }
+    
+    // Update last update time
+    const lastUpdateElement = document.getElementById('lastUpdate');
+    if (lastUpdateElement) {
+        lastUpdateElement.textContent = `Last update: ${new Date().toLocaleTimeString()}`;
+    }
+    
+    // Update auto irrigation toggle
+    const toggle = document.getElementById('autoIrrigationToggle');
+    if (toggle) {
+        autoIrrigationEnabled = latestData.autoIrrigation || false;
+        toggle.checked = autoIrrigationEnabled;
+    }
+    
+    // Check if irrigation is needed
+    if (autoIrrigationEnabled) {
+        checkIrrigationNeed(latestData.soilMoisture);
+    }
+    
+    console.log('✅ Farm display updated successfully');
+}
+
+// Update soil moisture chart
+function updateSoilChart(soilData) {
+    const ctx = document.getElementById('soilMoistureChart');
+    if (!ctx) {
+        console.log('Chart canvas not found');
+        return;
+    }
+    
+    // Sort data by timestamp
+    const sortedData = [...soilData].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    
+    const labels = sortedData.map(data => {
+        const date = new Date(data.timestamp);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    });
+    
+    const moistureLevels = sortedData.map(data => data.soilMoisture);
+    
+    console.log('📈 Updating chart with data points:', moistureLevels.length);
+    
+    // Destroy existing chart
+    if (soilMoistureChart) {
+        soilMoistureChart.destroy();
+    }
+    
+    // Create new chart
+    soilMoistureChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Soil Moisture %',
+                data: moistureLevels,
+                borderColor: '#27AE60',
+                backgroundColor: 'rgba(39, 174, 96, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4,
+                pointBackgroundColor: '#27AE60',
+                pointBorderColor: '#fff',
+                pointBorderWidth: 2,
+                pointRadius: 4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Soil Moisture History (Last 24 Hours)',
+                    font: { size: 16 }
+                },
+                legend: {
+                    display: true
+                }
+            },
+            scales: {
+                y: {
+                    min: 0,
+                    max: 100,
+                    title: {
+                        display: true,
+                        text: 'Moisture %'
+                    },
+                    grid: {
+                        color: 'rgba(0,0,0,0.1)'
+                    }
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Time'
+                    },
+                    grid: {
+                        color: 'rgba(0,0,0,0.1)'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Use simulated data when real data isn't available
+function useSimulatedData() {
+    console.log('🎮 Using simulated farm data');
+    
+    const simulatedData = [{
+        deviceId: "esp32_farm_001",
+        userId: "user_001", 
+        soilMoisture: Math.floor(Math.random() * 30) + 35, // 35-65%
+        temperature: 25 + Math.floor(Math.random() * 10), // 25-35°C
+        humidity: 50 + Math.floor(Math.random() * 20), // 50-70%
+        autoIrrigation: autoIrrigationEnabled,
+        sensorSlot: 1,
+        timestamp: new Date().toISOString()
+    }];
+    
+    updateFarmDisplay(simulatedData);
+    updateSoilChart(simulatedData);
+}
+
+// Start real-time updates
+function startRealTimeUpdates() {
+    // Clear existing interval
+    if (farmDataInterval) {
+        clearInterval(farmDataInterval);
+    }
+    
+    // Update every 10 seconds
+    farmDataInterval = setInterval(() => {
+        if (document.getElementById('myFarmTab') && !document.getElementById('myFarmTab').classList.contains('hidden')) {
+            loadFarmData();
+        }
+    }, 10000);
+    
+    console.log('🔄 Farm data updates started (10s interval)');
+}
+
+// Toggle auto irrigation
+async function toggleAutoIrrigation() {
+    const toggle = document.getElementById('autoIrrigationToggle');
+    autoIrrigationEnabled = toggle.checked;
+    
+    console.log('💧 Auto irrigation:', autoIrrigationEnabled ? 'ON' : 'OFF');
+    
+    try {
+        const response = await fetch('http://localhost:3001/api/auto-irrigation', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                userId: 'user_001',
+                enabled: autoIrrigationEnabled,
+                threshold: moistureThreshold
+            })
+        });
+        
+        const data = await response.json();
+        console.log('✅ Irrigation settings updated:', data);
+        
+        showNotification(`Auto irrigation ${autoIrrigationEnabled ? 'enabled' : 'disabled'}`, 'success');
+        
+    } catch (error) {
+        console.error('❌ Error updating irrigation:', error);
+        showNotification('Failed to update irrigation settings', 'error');
+        toggle.checked = !autoIrrigationEnabled; // Revert toggle
+    }
+}
+
+// Update moisture threshold
+function updateThreshold(value) {
+    moistureThreshold = parseInt(value);
+    const thresholdElement = document.getElementById('thresholdValue');
+    if (thresholdElement) {
+        thresholdElement.textContent = `${value}%`;
+    }
+    console.log('🎚️ Moisture threshold updated:', moistureThreshold + '%');
+}
+
+// Manual irrigation
+async function manualIrrigation() {
+    console.log('🚰 Manual irrigation requested');
+    showNotification('Starting manual irrigation...', 'info');
+    
+    try {
+        // Simulate irrigation (in real setup, this would call ESP32)
+        setTimeout(() => {
+            showNotification('Irrigation completed successfully', 'success');
+        }, 3000);
+        
+    } catch (error) {
+        console.error('Error starting irrigation:', error);
+        showNotification('Failed to start irrigation', 'error');
+    }
+}
+
+// Smart irrigation logic
+function checkIrrigationNeed(currentMoisture) {
+    if (!autoIrrigationEnabled) return;
+    
+    console.log(`💧 Checking irrigation need: ${currentMoisture}% vs threshold: ${moistureThreshold}%`);
+    
+    if (currentMoisture < moistureThreshold) {
+        console.log('🚰 Soil is dry! Triggering auto irrigation...');
+        triggerAutoIrrigation();
+    }
+}
+
+function triggerAutoIrrigation() {
+    showNotification('🌱 Soil is dry! Starting auto irrigation...', 'warning');
+    manualIrrigation();
+}
+
+// Get color based on moisture level
+function getMoistureColor(moisture) {
+    if (moisture < 30) return '#e74c3c'; // Red - dry
+    if (moisture < 70) return '#27AE60'; // Green - ideal  
+    return '#3498db'; // Blue - wet
+}
+
+// Add new sensor slot
+function addSensorSlot(slotNumber) {
+    showNotification(`Adding sensor slot ${slotNumber}...`, 'info');
+    console.log(`➕ Adding sensor slot ${slotNumber}`);
+}
+
+// Load weather data
+async function loadWeatherData() {
+    try {
+        const weatherDiv = document.getElementById('weatherData');
+        if (!weatherDiv) return;
+        
+        // For now, use simulated weather data
+        const weatherData = {
+            temp: 28,
+            humidity: 65,
+            description: 'Partly cloudy',
+            icon: '02d'
+        };
+        
+        displayWeatherData(weatherData);
+        
+    } catch (error) {
+        console.error('Error loading weather data:', error);
+        document.getElementById('weatherData').innerHTML = `
+            <div class="weather-error">Weather data unavailable</div>
+        `;
+    }
+}
+
+function displayWeatherData(weather) {
+    const weatherDiv = document.getElementById('weatherData');
+    
+    weatherDiv.innerHTML = `
+        <div class="weather-current">
+            <div class="weather-main">
+                <div style="font-size: 32px;">🌤️</div>
+                <div>
+                    <div class="weather-temp">${weather.temp}°C</div>
+                    <div class="weather-desc">${weather.description}</div>
+                </div>
+            </div>
+            <div class="weather-details">
+                <div class="weather-item">
+                    <i class="fas fa-tint"></i>
+                    <span>Humidity: ${weather.humidity}%</span>
+                </div>
+                <div class="weather-item">
+                    <i class="fas fa-wind"></i>
+                    <span>Wind: 12 km/h</span>
+                </div>
+                <div class="weather-item">
+                    <i class="fas fa-cloud-rain"></i>
+                    <span>Rain: 0mm</span>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Update the switchTab function to initialize farm when opened
+const originalSwitchTab = window.switchTab;
+window.switchTab = function(tabName) {
+    originalSwitchTab(tabName);
+    
+    if (tabName === 'myFarm') {
+        console.log('🌱 My Farm tab opened - initializing farm system');
+        setTimeout(() => {
+            initializeFarmSystem();
+        }, 100);
+    }
+};
+// ==================== INITIALIZATION ====================
+
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('SmartXCrop App Initialized');
+
+// Add dynamic styles
+addDynamicStyles();
+
+// Check authentication
+const savedUser = Storage.get('currentUser');
+const savedToken = Storage.get('authToken');
+
+if (savedUser && savedToken) {
+    currentUser = savedUser;
+    authToken = savedToken;
+    
+    // Initialize demo data if no products exist
+    if (Storage.get('allProducts', []).length === 0) {
+        loadDemoData();
+    }
+    
+    loadAppData();
+    initializeWebSocket();
+    document.getElementById('authScreen').classList.add('hidden');
+    document.getElementById('appScreen').classList.remove('hidden');
+} else {
+ loadAppData();
+    document.getElementById('authScreen').classList.remove('hidden');
+    document.getElementById('appScreen').classlassList.add('hidden');
+    loadDemoData(); // Initialize demo data for signup
+}
+
+
+// Initialize with feed tab
+switchTab('feed');
+
+console.log('✅ All features initialized successfully');
 });
+//==================== ADDITIONAL CSS FOR NEW FEATURES ====================
+function addDynamicStyles() {
+    const style = document.createElement('style');
+    style.textContent = `
+        .unread-badge {
+            width: 12px;
+            height: 12px;
+            background: #e74c3c;
+            border-radius: 50%;
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+        
+        .conversation-item {
+            position: relative;
+        }
+        
+        .product-preview {
+            padding: 8px;
+            margin: 5px 0;
+            background: var(--light-gray);
+            border-radius: 5px;
+            border-left: 3px solid var(--primary-green);
+        }
+        
+        .no-conversations {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--medium-gray);
+        }
+        
+        .price-alerts {
+            background: var(--white);
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+            box-shadow: var(--shadow);
+        }
+        
+        .alert-settings {
+            display: grid;
+            grid-template-columns: 1fr 1fr auto;
+            gap: 15px;
+            align-items: end;
+        }
+        
+        @media (max-width: 768px) {
+            .alert-settings {
+                grid-template-columns: 1fr;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+}

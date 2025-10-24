@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+
     <!-- Authentication Screen -->
     <div id="authScreen" class="auth-screen">
         <div class="auth-container">
@@ -99,6 +100,12 @@
                     <h1>🌱 SmartXCrop</h1>
                 </div>
                 <div class="header-actions">
+                    <!-- Notification Bell -->
+                    <div class="notification-bell" onclick="toggleNotificationWindow()">
+                        <i class="fas fa-bell"></i>
+                        <div class="notification-bell-badge" id="notificationBadge" style="display: none;">0</div>
+                    </div>
+                    
                     <div class="cart-icon" onclick="showCart()">
                         <i class="fas fa-shopping-cart"></i>
                         <div class="cart-badge" style="display: none;">0</div>
@@ -112,6 +119,24 @@
                 </div>
             </div>
         </header>
+
+        <!-- Notification Window -->
+        <div id="notificationWindow" class="notification-window hidden">
+            <div class="notification-window-header">
+                <h3>🔔 Notifications</h3>
+                <button class="btn btn-small" onclick="toggleNotificationWindow()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="notification-list" id="notificationList">
+                <!-- Notifications will be dynamically added here -->
+            </div>
+            <div class="notification-window-footer">
+                <button class="btn btn-small" onclick="clearAllNotifications()">
+                    <i class="fas fa-trash"></i> Clear All
+                </button>
+            </div>
+        </div>
 
         <!-- Navigation Tabs -->
         <nav class="nav-tabs">
@@ -134,7 +159,7 @@
                 <button class="tab-button" onclick="switchTab('profile')">
                     <i class="fas fa-user"></i> Profile
                 </button>
-                <button class="tab-button" onclick="openMyFarm()">
+                <button class="tab-button" onclick="switchTab('myFarm')">
                     <i class="fas fa-tractor"></i> My Farm
                 </button>
                 <button class="tab-button" onclick="openPlantIdentification()">
@@ -301,6 +326,130 @@
                     </div>
                     <div class="my-products-grid">
                         <!-- Products will be dynamically loaded here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- My Farm Tab -->
+            <div id="myFarmTab" class="tab-content hidden">
+                <div class="my-farm-container">
+                    <div class="section-header">
+                        <h3>🌱 My Smart Farm</h3>
+                        <p>Real-time soil monitoring and automated irrigation</p>
+                    </div>
+
+                    <!-- Connection Status -->
+                    <div class="farm-status">
+                        <div class="status-item disconnected" id="esp32Status">
+                            <i class="fas fa-wifi"></i>
+                            <span>ESP32: Disconnected</span>
+                        </div>
+                        <div class="last-update" id="lastUpdate">
+                            Last update: Never
+                        </div>
+                    </div>
+
+                    <!-- Auto Irrigation Control -->
+                    <div class="irrigation-control">
+                        <h4>🚰 Auto Irrigation System</h4>
+                        <div class="control-panel">
+                            <div class="toggle-switch">
+                                <label class="switch">
+                                    <input type="checkbox" id="autoIrrigationToggle" onchange="toggleAutoIrrigation()">
+                                    <span class="slider round"></span>
+                                </label>
+                                <span>Auto Irrigation</span>
+                            </div>
+                            <div class="irrigation-settings">
+                                <div class="form-group">
+                                    <label for="moistureThreshold">Moisture Threshold</label>
+                                    <input type="range" id="moistureThreshold" min="10" max="50" value="30" 
+                                           onchange="updateThreshold(this.value)">
+                                    <span id="thresholdValue">30%</span>
+                                </div>
+                                <button class="btn btn-small" onclick="manualIrrigation()">
+                                    <i class="fas fa-tint"></i> Water Now
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Soil Sensor Slots -->
+                    <div class="sensor-slots">
+                        <h4>🌡️ Soil Monitoring</h4>
+                        <div class="slots-grid">
+                            <!-- Slot 1 (Active) -->
+                            <div class="sensor-slot active">
+                                <div class="slot-header">
+                                    <h5>Sensor #1</h5>
+                                    <span class="sensor-status online">● Live</span>
+                                </div>
+                                <div class="sensor-data">
+                                    <div class="data-item">
+                                        <i class="fas fa-tint"></i>
+                                        <div>
+                                            <span class="data-value" id="soilMoisture1">--%</span>
+                                            <span class="data-label">Soil Moisture</span>
+                                        </div>
+                                    </div>
+                                    <div class="data-item">
+                                        <i class="fas fa-thermometer-half"></i>
+                                        <div>
+                                            <span class="data-value" id="soilTemp1">--°C</span>
+                                            <span class="data-label">Temperature</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="moisture-bar">
+                                    <div class="bar-container">
+                                        <div class="moisture-level" id="moistureBar1" style="width: 0%;"></div>
+                                    </div>
+                                    <div class="bar-labels">
+                                        <span>Dry</span>
+                                        <span>Ideal</span>
+                                        <span>Wet</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Empty slots for future sensors -->
+                            <div class="sensor-slot empty" onclick="addSensorSlot(2)">
+                                <i class="fas fa-plus"></i>
+                                <p>Add Sensor</p>
+                            </div>
+                            <div class="sensor-slot empty" onclick="addSensorSlot(3)">
+                                <i class="fas fa-plus"></i>
+                                <p>Add Sensor</p>
+                            </div>
+                            <div class="sensor-slot empty" onclick="addSensorSlot(4)">
+                                <i class="fas fa-plus"></i>
+                                <p>Add Sensor</p>
+                            </div>
+                            <div class="sensor-slot empty" onclick="addSensorSlot(5)">
+                                <i class="fas fa-plus"></i>
+                                <p>Add Sensor</p>
+                            </div>
+                            <div class="sensor-slot empty" onclick="addSensorSlot(6)">
+                                <i class="fas fa-plus"></i>
+                                <p>Add Sensor</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Real-time Charts -->
+                    <div class="farm-charts">
+                        <h4>📊 Soil Moisture History</h4>
+                        <div class="chart-container">
+                            <canvas id="soilMoistureChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Weather Integration -->
+                    <div class="weather-integration">
+                        <h4>🌤️ Local Weather</h4>
+                        <div class="weather-data" id="weatherData">
+                            <div class="loading">Loading weather data...</div>
+                        </div>
                     </div>
                 </div>
             </div>
