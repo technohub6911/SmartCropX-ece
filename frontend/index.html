@@ -162,6 +162,12 @@
                 <button class="tab-button" onclick="switchTab('myFarm')">
                     <i class="fas fa-tractor"></i> My Farm
                 </button>
+                <button class="tab-button" onclick="switchTab('topup')">
+                    <i class="fas fa-wallet"></i> Top Up
+                </button>
+                <button class="tab-button" onclick="switchTab('support')">
+                    <i class="fas fa-headset"></i> Support
+                </button>
                 <button class="tab-button" onclick="openPlantIdentification()">
                     <i class="fas fa-camera"></i> Plant ID
                 </button>
@@ -449,6 +455,171 @@
                         <h4>🌤️ Local Weather</h4>
                         <div class="weather-data" id="weatherData">
                             <div class="loading">Loading weather data...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Top Up Tab -->
+            <div id="topupTab" class="tab-content hidden">
+                <div class="topup-container">
+                    <div class="section-header">
+                        <h3>💰 Wallet & Top Up</h3>
+                        <p>Add funds to your wallet for seamless transactions</p>
+                    </div>
+                    
+                    <!-- Wallet Balance -->
+                    <div class="wallet-balance">
+                        <div class="balance-card">
+                            <h4>Current Balance</h4>
+                            <div class="balance-amount" id="currentBalance">₱0.00</div>
+                            <div class="balance-label">Available for transactions</div>
+                        </div>
+                    </div>
+
+                    <!-- Top Up Methods -->
+                    <div class="topup-methods">
+                        <h4>💳 Top Up Methods</h4>
+                        <div class="payment-options">
+                            <div class="payment-method" onclick="selectPaymentMethod('gcash')">
+                                <div class="payment-icon">📱</div>
+                                <div class="payment-info">
+                                    <h5>GCash</h5>
+                                    <p>Instant processing</p>
+                                </div>
+                                <div class="payment-arrow">
+                                    <i class="fas fa-chevron-right"></i>
+                                </div>
+                            </div>
+                            
+                            <div class="payment-method" onclick="selectPaymentMethod('maya')">
+                                <div class="payment-icon">💙</div>
+                                <div class="payment-info">
+                                    <h5>Maya</h5>
+                                    <p>Fast and secure</p>
+                                </div>
+                                <div class="payment-arrow">
+                                    <i class="fas fa-chevron-right"></i>
+                                </div>
+                            </div>
+                            
+                            <div class="payment-method" onclick="selectPaymentMethod('bank')">
+                                <div class="payment-icon">🏦</div>
+                                <div class="payment-info">
+                                    <h5>Bank Transfer</h5>
+                                    <p>1-2 business days</p>
+                                </div>
+                                <div class="payment-arrow">
+                                    <i class="fas fa-chevron-right"></i>
+                                </div>
+                            </div>
+                            
+                            <div class="payment-method" onclick="selectPaymentMethod('card')">
+                                <div class="payment-icon">💳</div>
+                                <div class="payment-info">
+                                    <h5>Credit/Debit Card</h5>
+                                    <p>Visa, Mastercard</p>
+                                </div>
+                                <div class="payment-arrow">
+                                    <i class="fas fa-chevron-right"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Transaction History -->
+                    <div class="transaction-history">
+                        <h4>📊 Recent Transactions</h4>
+                        <div class="transactions-list" id="transactionsList">
+                            <!-- Transactions will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Support Tab -->
+            <div id="supportTab" class="tab-content hidden">
+                <div class="support-container">
+                    <div class="section-header">
+                        <h3>🛟 Customer Support</h3>
+                        <p>We're here to help you with any issues</p>
+                    </div>
+
+                    <!-- Quick Help -->
+                    <div class="quick-help">
+                        <h4>🚀 Quick Help</h4>
+                        <div class="help-options">
+                            <div class="help-option" onclick="openFAQ()">
+                                <div class="help-icon">❓</div>
+                                <div class="help-info">
+                                    <h5>FAQ</h5>
+                                    <p>Frequently asked questions</p>
+                                </div>
+                            </div>
+                            
+                            <div class="help-option" onclick="openContactForm()">
+                                <div class="help-icon">📞</div>
+                                <div class="help-info">
+                                    <h5>Contact Support</h5>
+                                    <p>Get in touch with our team</p>
+                                </div>
+                            </div>
+                            
+                            <div class="help-option" onclick="openBugReport()">
+                                <div class="help-icon">🐛</div>
+                                <div class="help-info">
+                                    <h5>Report Bug</h5>
+                                    <p>Found an issue? Let us know</p>
+                                </div>
+                            </div>
+                            
+                            <div class="help-option" onclick="openFeatureRequest()">
+                                <div class="help-icon">💡</div>
+                                <div class="help-info">
+                                    <h5>Feature Request</h5>
+                                    <p>Suggest new features</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Live Support -->
+                    <div class="live-support">
+                        <h4>💬 Live Support</h4>
+                        <div class="support-chat">
+                            <div class="chat-messages" id="supportChat">
+                                <div class="message received">
+                                    <div class="message-content">
+                                        Hello! I'm your SmartXCrop assistant. How can I help you today?
+                                    </div>
+                                    <div class="message-time">Just now</div>
+                                </div>
+                            </div>
+                            <div class="chat-input">
+                                <input type="text" id="supportMessage" placeholder="Type your message...">
+                                <button onclick="sendSupportMessage()">
+                                    <i class="fas fa-paper-plane"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Contact Information -->
+                    <div class="contact-info">
+                        <h4>📞 Contact Information</h4>
+                        <div class="contact-details">
+                            <div class="contact-item">
+                                <i class="fas fa-phone"></i>
+                                <span>+63 912 345 6789</span>
+                            </div>
+                            <div class="contact-item">
+                                <i class="fas fa-envelope"></i>
+                                <span>support@smartxcrop.com</span>
+                            </div>
+                            <div class="contact-item">
+                                <i class="fas fa-clock"></i>
+                                <span>24/7 Support Available</span>
+                            </div>
                         </div>
                     </div>
                 </div>

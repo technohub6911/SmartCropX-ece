@@ -13,6 +13,7 @@ function debugProducts() {
         console.log('✅ Storage and array match');
     }
 }
+
 const Storage = {
     get(key, defaultValue = null) {
         try {
@@ -39,11 +40,15 @@ const Storage = {
 
 // ==================== API CONFIGURATION ====================
 const getApiBaseUrl = () => {
-    return window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-        ? 'http://localhost:3001/api' 
-        : '/api';
+    // If we're in development and backend might not be available
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        // Try to connect to local backend, but fallback gracefully
+        return 'http://localhost:3001/api';
+    } else {
+        // In production, use relative path
+        return '/api';
+    }
 };
-
 const API_BASE_URL = getApiBaseUrl();
 
 // ==================== PLANT API CONFIGURATION ====================
@@ -70,6 +75,107 @@ let ws = null;
 let selectedProfileImage = null;
 let priceChart = null;
 let priceUpdateInterval = null;
+let soilMoistureChart = null;
+let farmDataInterval = null;
+let autoIrrigationEnabled = false;
+let moistureThreshold = 30;
+let isESP32Connected = false;
+
+// ==================== WALLET & COMMISSION SYSTEM ====================
+const COMMISSION_RATE = 0.05; // 5% commission
+
+// Initialize wallet system
+function initializeWalletSystem() {
+    if (!currentUser) return;
+    
+    // Initialize wallet if not exists
+    if (!currentUser.wallet) {
+        currentUser.wallet = {
+            balance: 1000, // Starting balance for demo
+            transactions: []
+        };
+        Storage.set('currentUser', currentUser);
+    }
+    
+    updateWalletDisplay();
+}
+
+// Update wallet display
+function updateWalletDisplay() {
+    const balanceElement = document.getElementById('currentBalance');
+    if (balanceElement && currentUser.wallet) {
+        balanceElement.textContent = `₱${currentUser.wallet.balance.toFixed(2)}`;
+    }
+    loadTransactionHistory();
+}
+
+// Load transaction history
+function loadTransactionHistory() {
+    const transactionsList = document.getElementById('transactionsList');
+    if (!transactionsList || !currentUser.wallet) return;
+    
+    const transactions = currentUser.wallet.transactions.slice(-10).reverse(); // Show last 10 transactions
+    
+    if (transactions.length === 0) {
+        transactionsList.innerHTML = `
+            <div class="no-transactions">
+                <i class="fas fa-receipt" style="font-size: 48px; margin-bottom: 16px;"></i>
+                <p>No transactions yet</p>
+                <small>Your transaction history will appear here</small>
+            </div>
+        `;
+        return;
+    }
+    
+    transactionsList.innerHTML = transactions.map(transaction => `
+        <div class="transaction-item ${transaction.amount < 0 ? 'negative' : ''}">
+            <div class="transaction-info">
+                <h5>${transaction.description}</h5>
+                <p>${new Date(transaction.timestamp).toLocaleDateString()} • ${transaction.type}</p>
+            </div>
+            <div class="transaction-amount ${transaction.amount >= 0 ? 'positive' : 'negative'}">
+                ${transaction.amount >= 0 ? '+' : ''}₱${Math.abs(transaction.amount).toFixed(2)}
+            </div>
+        </div>
+    `).join('');
+}
+
+// Add transaction to wallet
+function addTransaction(amount, description, type = 'transaction') {
+    if (!currentUser.wallet) {
+        currentUser.wallet = {
+            balance: 0,
+            transactions: []
+        };
+    }
+    
+    const transaction = {
+        id: 'txn_' + Date.now(),
+        amount: amount,
+        description: description,
+        type: type,
+        timestamp: new Date().toISOString()
+    };
+    
+    currentUser.wallet.balance += amount;
+    currentUser.wallet.transactions.push(transaction);
+    
+    Storage.set('currentUser', currentUser);
+    updateWalletDisplay();
+    
+    return transaction;
+}
+
+// Calculate commission
+function calculateCommission(amount) {
+    return amount * COMMISSION_RATE;
+}
+
+// Check if user has sufficient balance
+function hasSufficientBalance(amount) {
+    return currentUser.wallet && currentUser.wallet.balance >= amount;
+}
+
 // ==================== IMPROVED AI API INTEGRATION ====================
 
 // Enhanced Plant.ID for accurate plant identification with better error handling
@@ -929,6 +1035,11 @@ const apiService = {
         };
 
         try {
+            // Check if we're likely offline or backend is unavailable
+            if (!navigator.onLine) {
+                throw new Error('You appear to be offline. Using local data.');
+            }
+
             const response = await fetch(url, config);
             
             if (response.status === 403) {
@@ -938,6 +1049,12 @@ const apiService = {
             }
             
             if (!response.ok) {
+                // If backend is not available, use local data
+                if (response.status === 0 || response.status >= 500) {
+                    console.warn('Backend unavailable, using local data');
+                    throw new Error('Backend temporarily unavailable');
+                }
+                
                 const errorData = await response.json().catch(() => ({ error: 'Network error' }));
                 throw new Error(errorData.error || `HTTP ${response.status}`);
             }
@@ -945,9 +1062,17 @@ const apiService = {
             return await response.json();
         } catch (error) {
             console.error('API Request failed:', error);
+            
+            // If it's a network error, use local data
+            if (error.message.includes('offline') || error.message.includes('unavailable')) {
+                // We'll use local data, so don't throw error
+                return { success: false, message: error.message };
+            }
+            
             if (error.message.includes('Authentication failed')) {
                 throw error;
             }
+            
             throw new Error('Network request failed');
         }
     },
@@ -1096,7 +1221,11 @@ async function signup() {
             avatar: selectedAvatar || '👤',
             location: location,
             isSeller: userType === 'seller' || userType === 'both',
-            createdAt: new Date().toISOString()
+            createdAt: new Date().toISOString(),
+            wallet: {
+                balance: 1000, // Starting balance
+                transactions: []
+            }
         };
 
         const data = await apiService.post('/register', userData);
@@ -1291,12 +1420,22 @@ function switchTab(tabName) {
         case 'profile':
             updateProfile();
             loadMyProducts();
+            updateProfileStats();
             break;
         case 'agroInputs':
             loadAgroInputsTab();
             break;
         case 'messages':
             loadMessagesTab();
+            break;
+        case 'topup':
+            initializeWalletSystem();
+            break;
+        case 'support':
+            // Support tab is automatically loaded
+            break;
+        case 'myFarm':
+            setTimeout(() => initializeFarmSystem(), 100);
             break;
     }
 }
@@ -1343,15 +1482,22 @@ async function loadAppData() {
             }
         }
         
+        // Initialize wallet system
+        initializeWalletSystem();
+        
         // Initialize real-time systems
-        initializeRealTimeMessaging();
+        function initializeRealTimeMessaging() {
+    // This is now handled by the main polling system
+    console.log('Real-time messaging initialized via polling');
+}
+
         initializeProductSync();
         
         // Update ALL displays
         displayProducts(allProducts);
         updateProfile();
         loadMyProducts();
-        updateProfileStats(); // UPDATE STATS HERE TOO
+        updateProfileStats();
         updateHeaderWithCart();
         updateCartBadge();
         
@@ -1365,8 +1511,9 @@ async function loadAppData() {
         hideLoading();
     }
 }
+
 async function loadDemoData() {
-console.log('Loading demo data...');
+    console.log('Loading demo data...');
     // Fallback demo data if API fails
     if (allUsers.length === 0) {
         allUsers = [
@@ -1378,7 +1525,11 @@ console.log('Loading demo data...');
                 userType: 'seller',
                 avatar: '👨‍🌾',
                 location: { lat: 16.4023, lng: 120.5960 },
-                isSeller: true
+                isSeller: true,
+                wallet: {
+                    balance: 5000,
+                    transactions: []
+                }
             },
             {
                 id: 'user_2',
@@ -1388,7 +1539,11 @@ console.log('Loading demo data...');
                 userType: 'seller',
                 avatar: '👩‍🌾',
                 location: { lat: 10.5921, lng: 122.6321 },
-                isSeller: true
+                isSeller: true,
+                wallet: {
+                    balance: 3000,
+                    transactions: []
+                }
             },
             {
                 id: 'user_3',
@@ -1398,7 +1553,11 @@ console.log('Loading demo data...');
                 userType: 'buyer',
                 avatar: '👨',
                 location: { lat: 15.0419, lng: 120.6587 },
-                isSeller: false
+                isSeller: false,
+                wallet: {
+                    balance: 2000,
+                    transactions: []
+                }
             }
         ];
     }
@@ -1440,7 +1599,7 @@ console.log('Loading demo data...');
             }
         ];
         Storage.set('allProducts', allProducts);
-	console.log('Demo data saved to storage');
+        console.log('Demo data saved to storage');
         displayProducts(allProducts);
     }
 }
@@ -1569,7 +1728,7 @@ function loadMyProducts() {
     `).join('');
 }
 
-// ==================== NEGOTIATE FEATURE ====================
+// ==================== UPDATED NEGOTIATE FEATURE WITH COMMISSION ====================
 function openNegotiate(productId) {
     const product = allProducts.find(p => p.id === productId);
     if (!product) {
@@ -1587,26 +1746,41 @@ function openNegotiate(productId) {
                 <p>Seller: ${product.seller?.fullName || 'Unknown Seller'}</p>
             </div>
             
+            <div class="commission-notice">
+                <i class="fas fa-info-circle"></i>
+                A <span class="commission-fee">5% commission fee</span> will be applied to all transactions.
+            </div>
+            
+            ${!hasSufficientBalance(product.pricePerKg) ? `
+                <div class="wallet-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    Insufficient wallet balance. Please top up first.
+                </div>
+            ` : ''}
+            
             <form onsubmit="submitNegotiation(event, '${productId}')">
                 <div class="form-group">
                     <label for="negotiatePrice">Your Offered Price (₱/kg)</label>
                     <input type="number" id="negotiatePrice" class="form-control" 
                            step="0.01" min="1" max="${product.pricePerKg * 2}" 
-                           value="${(product.pricePerKg * 0.9).toFixed(2)}" required>
+                           value="${(product.pricePerKg * 0.9).toFixed(2)}" required
+                           ${!hasSufficientBalance(product.pricePerKg) ? 'disabled' : ''}>
                     <small>Current price: ₱${product.pricePerKg.toFixed(2)}/kg</small>
                 </div>
                 
                 <div class="form-group">
                     <label for="negotiateQuantity">Quantity (kg)</label>
                     <input type="number" id="negotiateQuantity" class="form-control" 
-                           min="1" max="${product.stock}" value="1" required>
+                           min="1" max="${product.stock}" value="1" required
+                           ${!hasSufficientBalance(product.pricePerKg) ? 'disabled' : ''}>
                     <small>Available stock: ${product.stock} kg</small>
                 </div>
                 
                 <div class="form-group">
                     <label for="negotiateMessage">Message (Optional)</label>
                     <textarea id="negotiateMessage" class="form-control" rows="3" 
-                              placeholder="Add a message to the seller..."></textarea>
+                              placeholder="Add a message to the seller..."
+                              ${!hasSufficientBalance(product.pricePerKg) ? 'disabled' : ''}></textarea>
                 </div>
                 
                 <div class="negotiation-summary">
@@ -1628,6 +1802,14 @@ function openNegotiate(productId) {
                         <span id="summaryPriceDiff">-₱${(product.pricePerKg * 0.1).toFixed(2)}/kg</span>
                     </div>
                     <div class="summary-item">
+                        <span>Subtotal:</span>
+                        <span id="summarySubtotal">₱${(product.pricePerKg * 0.9).toFixed(2)}</span>
+                    </div>
+                    <div class="summary-item commission">
+                        <span>Platform Commission (5%):</span>
+                        <span id="summaryCommission">₱${(product.pricePerKg * 0.9 * 0.05).toFixed(2)}</span>
+                    </div>
+                    <div class="summary-item">
                         <span>Original Total:</span>
                         <span id="summaryOriginalTotal">₱${product.pricePerKg.toFixed(2)}</span>
                     </div>
@@ -1637,13 +1819,25 @@ function openNegotiate(productId) {
                     </div>
                     <div class="summary-item total">
                         <span>Final Total Amount:</span>
-                        <span id="summaryTotal">₱${(product.pricePerKg * 0.9).toFixed(2)}</span>
+                        <span id="summaryTotal">₱${(product.pricePerKg * 0.9 * 1.05).toFixed(2)}</span>
+                    </div>
+                    <div class="summary-item wallet">
+                        <span>Your Wallet Balance:</span>
+                        <span id="summaryWalletBalance">₱${currentUser.wallet?.balance.toFixed(2) || '0.00'}</span>
                     </div>
                 </div>
                 
                 <div class="form-actions">
                     <button type="button" onclick="closeModal()">Cancel</button>
-                    <button type="submit">Send Negotiation</button>
+                    <button type="submit" ${!hasSufficientBalance(product.pricePerKg) ? 'disabled' : ''}>
+                        Send Negotiation
+                    </button>
+                    ${!hasSufficientBalance(product.pricePerKg) ? `
+                        <button type="button" onclick="switchTab('topup'); closeModal();" 
+                                style="background: #3498db; color: white;">
+                            Top Up Wallet
+                        </button>
+                    ` : ''}
                 </div>
             </form>
         </div>
@@ -1659,41 +1853,43 @@ function openNegotiate(productId) {
         const quantity = parseInt(document.getElementById('negotiateQuantity').value) || 0;
         
         // Calculate totals
+        const subtotal = offeredPricePerKg * quantity;
+        const commission = calculateCommission(subtotal);
+        const total = subtotal + commission;
         const originalTotal = originalPricePerKg * quantity;
-        const offeredTotal = offeredPricePerKg * quantity;
         
         // Calculate savings
         const priceDiffPerKg = originalPricePerKg - offeredPricePerKg;
-        const totalSavings = originalTotal - offeredTotal;
+        const totalSavings = originalTotal - subtotal;
         
         // Update the display
         document.getElementById('summaryQuantity').textContent = `${quantity} kg`;
         document.getElementById('summaryOriginalPrice').textContent = `₱${originalPricePerKg.toFixed(2)}/kg`;
         document.getElementById('summaryPrice').textContent = `₱${offeredPricePerKg.toFixed(2)}/kg`;
         document.getElementById('summaryPriceDiff').textContent = `${priceDiffPerKg >= 0 ? '-' : '+'}₱${Math.abs(priceDiffPerKg).toFixed(2)}/kg`;
+        document.getElementById('summarySubtotal').textContent = `₱${subtotal.toFixed(2)}`;
+        document.getElementById('summaryCommission').textContent = `₱${commission.toFixed(2)}`;
         document.getElementById('summaryOriginalTotal').textContent = `₱${originalTotal.toFixed(2)}`;
         document.getElementById('summarySavings').textContent = `₱${totalSavings.toFixed(2)}`;
-        document.getElementById('summaryTotal').textContent = `₱${offeredTotal.toFixed(2)}`;
+        document.getElementById('summaryTotal').textContent = `₱${total.toFixed(2)}`;
+        document.getElementById('summaryWalletBalance').textContent = `₱${currentUser.wallet?.balance.toFixed(2) || '0.00'}`;
         
-        // Color coding for savings
+        // Color coding
         const savingsElement = document.getElementById('summarySavings');
         const priceDiffElement = document.getElementById('summaryPriceDiff');
+        const walletElement = document.getElementById('summaryWalletBalance');
         
         if (totalSavings > 0) {
             savingsElement.style.color = '#27AE60';
             savingsElement.innerHTML = `₱${totalSavings.toFixed(2)} <small>(You save!)</small>`;
-            priceDiffElement.style.color = '#27AE60';
         } else if (totalSavings < 0) {
             savingsElement.style.color = '#e74c3c';
             savingsElement.innerHTML = `-₱${Math.abs(totalSavings).toFixed(2)} <small>(You pay more!)</small>`;
-            priceDiffElement.style.color = '#e74c3c';
         } else {
             savingsElement.style.color = '#666';
             savingsElement.textContent = `₱${totalSavings.toFixed(2)}`;
-            priceDiffElement.style.color = '#666';
         }
         
-        // Color for price difference
         if (priceDiffPerKg > 0) {
             priceDiffElement.style.color = '#27AE60';
         } else if (priceDiffPerKg < 0) {
@@ -1701,11 +1897,19 @@ function openNegotiate(productId) {
         } else {
             priceDiffElement.style.color = '#666';
         }
+        
+        // Check if user has sufficient balance
+        if (currentUser.wallet && currentUser.wallet.balance >= total) {
+            walletElement.style.color = '#27AE60';
+        } else {
+            walletElement.style.color = '#e74c3c';
+        }
     }
     
     // Initial calculation
     updateNegotiationSummary();
 }
+
 function submitNegotiation(event, productId) {
     event.preventDefault();
     
@@ -1724,6 +1928,17 @@ function submitNegotiation(event, productId) {
         return;
     }
     
+    // Calculate total with commission
+    const subtotal = offeredPrice * quantity;
+    const commission = calculateCommission(subtotal);
+    const total = subtotal + commission;
+    
+    // Check wallet balance
+    if (!hasSufficientBalance(total)) {
+        showNotification(`Insufficient wallet balance. You need ₱${total.toFixed(2)} but have ₱${currentUser.wallet.balance.toFixed(2)}`, 'error');
+        return;
+    }
+    
     try {
         showLoading('Sending negotiation...');
         
@@ -1736,6 +1951,9 @@ function submitNegotiation(event, productId) {
             seller: product.seller,
             offeredPrice: offeredPrice,
             quantity: quantity,
+            subtotal: subtotal,
+            commission: commission,
+            total: total,
             message: message,
             status: 'pending',
             createdAt: new Date().toISOString()
@@ -1747,7 +1965,7 @@ function submitNegotiation(event, productId) {
         Storage.set('negotiations', negotiations);
         
         closeModal();
-        showNotification('Negotiation sent successfully! The seller will respond soon.', 'success');
+        showNotification(`Negotiation sent successfully! Total: ₱${total.toFixed(2)} (including ₱${commission.toFixed(2)} commission)`, 'success');
         
         // Simulate seller response after 3 seconds
         setTimeout(() => {
@@ -1795,7 +2013,45 @@ function simulateSellerResponse(negotiationId) {
         Storage.set('negotiations', negotiations);
         
         showNotification(`Seller responded to your negotiation: ${response.message}`, 'info');
+        
+        // If accepted, process payment
+        if (response.status === 'accepted') {
+            processNegotiationPayment(negotiation);
+        }
     }
+}
+
+function processNegotiationPayment(negotiation) {
+    try {
+        // Deduct from buyer's wallet
+        addTransaction(-negotiation.total, `Purchase: ${negotiation.product.title}`, 'purchase');
+        
+        // Add commission to platform
+        addCommissionToPlatform(negotiation.commission, `Commission from ${negotiation.buyer.fullName}'s purchase`);
+        
+        showNotification(`Payment processed successfully! ₱${negotiation.total.toFixed(2)} deducted from your wallet.`, 'success');
+        
+    } catch (error) {
+        console.error('Payment processing error:', error);
+        showNotification('Payment processing failed', 'error');
+    }
+}
+
+// Simulate platform commission collection
+function addCommissionToPlatform(amount, description) {
+    // In a real app, this would go to the platform's wallet
+    console.log(`Platform commission: ₱${amount.toFixed(2)} - ${description}`);
+    
+    // Store commission transactions separately
+    const platformTransactions = Storage.get('platformCommissions', []);
+    platformTransactions.push({
+        id: 'comm_' + Date.now(),
+        amount: amount,
+        description: description,
+        timestamp: new Date().toISOString(),
+        userId: currentUser.id
+    });
+    Storage.set('platformCommissions', platformTransactions);
 }
 
 // ==================== CART MANAGEMENT ====================
@@ -1862,7 +2118,7 @@ function showCart() {
         return;
     }
     
-    let total = 0;
+    let subtotal = 0;
     modal.innerHTML = `
         <div class="cart-items">
             ${cart.map(item => {
@@ -1871,7 +2127,7 @@ function showCart() {
                     return '';
                 }
                 const itemTotal = (item.product.pricePerKg || 0) * (item.quantity || 0);
-                total += itemTotal;
+                subtotal += itemTotal;
                 return `
                     <div class="cart-item">
                         <div class="item-info">
@@ -1893,12 +2149,40 @@ function showCart() {
                 `;
             }).join('')}
         </div>
-        <div class="cart-total">
-            <strong>Total: ₱${total.toFixed(2)}</strong>
+        <div class="cart-summary">
+            <div class="summary-item">
+                <span>Subtotal:</span>
+                <span>₱${subtotal.toFixed(2)}</span>
+            </div>
+            <div class="summary-item commission">
+                <span>Platform Commission (5%):</span>
+                <span>₱${calculateCommission(subtotal).toFixed(2)}</span>
+            </div>
+            <div class="cart-total">
+                <strong>Total: ₱${(subtotal + calculateCommission(subtotal)).toFixed(2)}</strong>
+            </div>
+            <div class="wallet-balance-check">
+                <small>Your wallet balance: ₱${currentUser.wallet?.balance.toFixed(2) || '0.00'}</small>
+                ${!hasSufficientBalance(subtotal + calculateCommission(subtotal)) ? `
+                    <div class="wallet-warning">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        Insufficient balance. Please top up.
+                    </div>
+                ` : ''}
+            </div>
         </div>
         <div class="form-actions">
             <button type="button" onclick="closeModal()">Continue Shopping</button>
-            <button type="submit" style="background: var(--primary-green); color: white;" onclick="checkout()">Checkout</button>
+            <button type="submit" style="background: var(--primary-green); color: white;" 
+                    onclick="checkout()" ${!hasSufficientBalance(subtotal + calculateCommission(subtotal)) ? 'disabled' : ''}>
+                Checkout
+            </button>
+            ${!hasSufficientBalance(subtotal + calculateCommission(subtotal)) ? `
+                <button type="button" onclick="switchTab('topup'); closeModal();" 
+                        style="background: #3498db; color: white;">
+                    Top Up Wallet
+                </button>
+            ` : ''}
         </div>
     `;
 }
@@ -1926,22 +2210,38 @@ function updateCartQuantity(productId, newQuantity) {
     }
 }
 
+// ==================== UPDATED CHECKOUT WITH COMMISSION ====================
 function checkout() {
     if (cart.length === 0) {
         showNotification('Your cart is empty', 'error');
         return;
     }
 
+    // Calculate total with commission
+    let subtotal = 0;
+    cart.forEach(item => {
+        if (item.product) {
+            subtotal += (item.product.pricePerKg || 0) * (item.quantity || 0);
+        }
+    });
+    
+    const commission = calculateCommission(subtotal);
+    const total = subtotal + commission;
+
+    // Check wallet balance
+    if (!hasSufficientBalance(total)) {
+        showNotification(`Insufficient wallet balance. You need ₱${total.toFixed(2)} but have ₱${currentUser.wallet.balance.toFixed(2)}`, 'error');
+        return;
+    }
+
     try {
         showLoading('Processing checkout...');
         
-        // Calculate total
-        let total = 0;
-        cart.forEach(item => {
-            if (item.product) {
-                total += (item.product.pricePerKg || 0) * (item.quantity || 0);
-            }
-        });
+        // Process payment
+        addTransaction(-total, `Purchase of ${cart.length} items`, 'purchase');
+        
+        // Add commission to platform wallet
+        addCommissionToPlatform(commission, `Commission from purchase of ${cart.length} items`);
         
         // Clear cart
         cart = [];
@@ -1949,7 +2249,7 @@ function checkout() {
         updateCartBadge();
         
         closeModal();
-        showNotification(`Order placed successfully! Total: ₱${total.toFixed(2)}. Sellers have been notified.`, 'success');
+        showNotification(`Order placed successfully! Total: ₱${total.toFixed(2)} (including ₱${commission.toFixed(2)} commission)`, 'success');
         
         // Refresh products display
         displayProducts(allProducts);
@@ -1961,6 +2261,380 @@ function checkout() {
     } finally {
         hideLoading();
     }
+}
+
+// ==================== TOP UP SYSTEM ====================
+function selectPaymentMethod(method) {
+    const modal = createModal(`💳 Top Up via ${getPaymentMethodName(method)}`);
+    
+    modal.innerHTML = `
+        <div class="payment-modal">
+            <div class="form-group">
+                <label for="topupAmount">Amount to Top Up (₱)</label>
+                <input type="number" id="topupAmount" class="form-control" 
+                       min="50" step="50" value="500" required>
+            </div>
+            
+            <div class="amount-options">
+                <div class="amount-option" onclick="setTopupAmount(100)">₱100</div>
+                <div class="amount-option" onclick="setTopupAmount(500)">₱500</div>
+                <div class="amount-option" onclick="setTopupAmount(1000)">₱1,000</div>
+                <div class="amount-option" onclick="setTopupAmount(2000)">₱2,000</div>
+            </div>
+            
+            ${getPaymentInstructions(method)}
+            
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Cancel</button>
+                <button type="button" onclick="processTopup('${method}')" class="btn-primary">
+                    Confirm Top Up
+                </button>
+            </div>
+        </div>
+    `;
+    
+    // Set initial amount option as selected
+    setTopupAmount(500);
+}
+
+function getPaymentMethodName(method) {
+    const names = {
+        'gcash': 'GCash',
+        'maya': 'Maya',
+        'bank': 'Bank Transfer',
+        'card': 'Credit/Debit Card'
+    };
+    return names[method] || method;
+}
+
+function getPaymentInstructions(method) {
+    switch(method) {
+        case 'gcash':
+            return `
+                <div class="payment-instructions">
+                    <h5>GCash Instructions:</h5>
+                    <p>1. Open GCash app</p>
+                    <p>2. Go to "Send Money"</p>
+                    <p>3. Enter number: <strong>0917 123 4567</strong></p>
+                    <p>4. Send the exact amount</p>
+                    <p>5. Take screenshot of receipt</p>
+                </div>
+                <div class="payment-qr">
+                    <div style="width: 200px; height: 200px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; margin: 0 auto; border-radius: 10px;">
+                        <span style="color: #666;">GCash QR Code</span>
+                    </div>
+                    <p style="margin-top: 10px; font-size: 12px; color: #666;">Scan to pay via GCash</p>
+                </div>
+            `;
+        case 'maya':
+            return `
+                <div class="payment-instructions">
+                    <h5>Maya Instructions:</h5>
+                    <p>1. Open Maya app</p>
+                    <p>2. Go to "Send Money"</p>
+                    <p>3. Enter number: <strong>0917 123 4567</strong></p>
+                    <p>4. Send the exact amount</p>
+                </div>
+            `;
+        case 'bank':
+            return `
+                <div class="payment-instructions">
+                    <h5>Bank Transfer Details:</h5>
+                    <p><strong>Bank:</strong> BDO</p>
+                    <p><strong>Account Name:</strong> SmartXCrop Inc.</p>
+                    <p><strong>Account Number:</strong> 0012 3456 7890</p>
+                    <p><strong>Reference:</strong> Your Username</p>
+                </div>
+            `;
+        case 'card':
+            return `
+                <div class="payment-instructions">
+                    <h5>Card Payment:</h5>
+                    <p>You will be redirected to our secure payment gateway</p>
+                    <p>We accept Visa, Mastercard, and JCB</p>
+                </div>
+            `;
+        default:
+            return '<p>Payment instructions will be shown here</p>';
+    }
+}
+
+function setTopupAmount(amount) {
+    document.getElementById('topupAmount').value = amount;
+    
+    // Update selected state
+    document.querySelectorAll('.amount-option').forEach(option => {
+        option.classList.remove('selected');
+    });
+    
+    // Find and select the clicked option
+    document.querySelectorAll('.amount-option').forEach(option => {
+        if (option.textContent.includes(`₱${amount}`)) {
+            option.classList.add('selected');
+        }
+    });
+}
+
+function processTopup(method) {
+    const amount = parseFloat(document.getElementById('topupAmount').value);
+    
+    if (!amount || amount < 50) {
+        showNotification('Minimum top up amount is ₱50', 'error');
+        return;
+    }
+    
+    try {
+        showLoading(`Processing ₱${amount.toFixed(2)} top up...`);
+        
+        // Simulate payment processing
+        setTimeout(() => {
+            // Add to wallet
+            addTransaction(amount, `Top up via ${getPaymentMethodName(method)}`, 'topup');
+            
+            closeModal();
+            showNotification(`Successfully topped up ₱${amount.toFixed(2)}!`, 'success');
+            
+            // Refresh wallet display
+            updateWalletDisplay();
+            
+        }, 2000);
+        
+    } catch (error) {
+        console.error('Top up error:', error);
+        showNotification('Top up failed. Please try again.', 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+// ==================== SUPPORT SYSTEM ====================
+function openFAQ() {
+    const modal = createModal('❓ Frequently Asked Questions', 'large');
+    
+    modal.innerHTML = `
+        <div class="faq-container">
+            <div class="faq-item">
+                <h4>How do I add a product?</h4>
+                <p>Go to your Profile tab and click "Add Product". Fill in the details and submit.</p>
+            </div>
+            
+            <div class="faq-item">
+                <h4>How does negotiation work?</h4>
+                <p>Click "Negotiate" on any product, make your offer, and wait for the seller's response.</p>
+            </div>
+            
+            <div class="faq-item">
+                <h4>What is the commission fee?</h4>
+                <p>We charge a 5% commission on all successful transactions to maintain the platform.</p>
+            </div>
+            
+            <div class="faq-item">
+                <h4>How do I top up my wallet?</h4>
+                <p>Go to the Top Up tab and choose your preferred payment method.</p>
+            </div>
+            
+            <div class="faq-item">
+                <h4>Is my payment information secure?</h4>
+                <p>Yes, we use secure payment gateways and never store your card details.</p>
+            </div>
+        </div>
+        
+        <div class="form-actions">
+            <button type="button" onclick="closeModal()">Close</button>
+        </div>
+    `;
+}
+
+function openContactForm() {
+    const modal = createModal('📞 Contact Support');
+    
+    modal.innerHTML = `
+        <form onsubmit="submitContactForm(event)">
+            <div class="form-group">
+                <label for="contactSubject">Subject</label>
+                <select id="contactSubject" class="form-control" required>
+                    <option value="">Select subject</option>
+                    <option value="technical">Technical Issue</option>
+                    <option value="payment">Payment Problem</option>
+                    <option value="account">Account Issue</option>
+                    <option value="product">Product Related</option>
+                    <option value="other">Other</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="contactMessage">Message</label>
+                <textarea id="contactMessage" class="form-control" rows="5" 
+                          placeholder="Please describe your issue in detail..." required></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="contactEmail">Email</label>
+                <input type="email" id="contactEmail" class="form-control" 
+                       value="${currentUser.email || ''}" 
+                       placeholder="Your email for response" required>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Cancel</button>
+                <button type="submit">Send Message</button>
+            </div>
+        </form>
+    `;
+}
+
+function submitContactForm(event) {
+    event.preventDefault();
+    
+    const subject = document.getElementById('contactSubject').value;
+    const message = document.getElementById('contactMessage').value;
+    const email = document.getElementById('contactEmail').value;
+    
+    // Simulate sending contact form
+    showLoading('Sending your message...');
+    
+    setTimeout(() => {
+        closeModal();
+        showNotification('Message sent! We will respond within 24 hours.', 'success');
+    }, 1500);
+}
+
+function openBugReport() {
+    const modal = createModal('🐛 Report Bug');
+    
+    modal.innerHTML = `
+        <form onsubmit="submitBugReport(event)">
+            <div class="form-group">
+                <label for="bugDescription">Bug Description</label>
+                <textarea id="bugDescription" class="form-control" rows="4" 
+                          placeholder="What happened? What were you trying to do?" required></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="bugSteps">Steps to Reproduce</label>
+                <textarea id="bugSteps" class="form-control" rows="3" 
+                          placeholder="Step by step how to reproduce the issue..."></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="bugDevice">Device & Browser</label>
+                <input type="text" id="bugDevice" class="form-control" 
+                       placeholder="e.g., iPhone 13, Chrome" required>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Cancel</button>
+                <button type="submit">Submit Report</button>
+            </div>
+        </form>
+    `;
+}
+
+function submitBugReport(event) {
+    event.preventDefault();
+    
+    const description = document.getElementById('bugDescription').value;
+    const steps = document.getElementById('bugSteps').value;
+    const device = document.getElementById('bugDevice').value;
+    
+    showLoading('Submitting bug report...');
+    
+    setTimeout(() => {
+        closeModal();
+        showNotification('Bug report submitted! Thank you for helping us improve.', 'success');
+    }, 1500);
+}
+
+function openFeatureRequest() {
+    const modal = createModal('💡 Feature Request');
+    
+    modal.innerHTML = `
+        <form onsubmit="submitFeatureRequest(event)">
+            <div class="form-group">
+                <label for="featureTitle">Feature Title</label>
+                <input type="text" id="featureTitle" class="form-control" 
+                       placeholder="Brief title of your feature request" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="featureDescription">Detailed Description</label>
+                <textarea id="featureDescription" class="form-control" rows="5" 
+                          placeholder="Describe the feature and how it would help you..." required></textarea>
+            </div>
+            
+            <div class="form-group">
+                <label for="featurePriority">How important is this for you?</label>
+                <select id="featurePriority" class="form-control" required>
+                    <option value="low">Nice to have</option>
+                    <option value="medium">Important</option>
+                    <option value="high">Very important</option>
+                </select>
+            </div>
+            
+            <div class="form-actions">
+                <button type="button" onclick="closeModal()">Cancel</button>
+                <button type="submit">Submit Request</button>
+            </div>
+        </form>
+    `;
+}
+
+function submitFeatureRequest(event) {
+    event.preventDefault();
+    
+    const title = document.getElementById('featureTitle').value;
+    const description = document.getElementById('featureDescription').value;
+    const priority = document.getElementById('featurePriority').value;
+    
+    showLoading('Submitting feature request...');
+    
+    setTimeout(() => {
+        closeModal();
+        showNotification('Feature request submitted! We appreciate your feedback.', 'success');
+    }, 1500);
+}
+
+function sendSupportMessage() {
+    const input = document.getElementById('supportMessage');
+    const message = input.value.trim();
+    
+    if (!message) return;
+    
+    const chat = document.getElementById('supportChat');
+    
+    // Add user message
+    chat.innerHTML += `
+        <div class="message sent">
+            <div class="message-content">${message}</div>
+            <div class="message-time">Just now</div>
+        </div>
+    `;
+    
+    input.value = '';
+    
+    // Simulate support response
+    setTimeout(() => {
+        const responses = [
+            "I understand your concern. Let me help you with that.",
+            "Thank you for bringing this to our attention.",
+            "I'll forward this to our technical team for review.",
+            "Is there anything else I can help you with?",
+            "We're working on improving that feature. Thanks for your patience!"
+        ];
+        
+        const response = responses[Math.floor(Math.random() * responses.length)];
+        
+        chat.innerHTML += `
+            <div class="message received">
+                <div class="message-content">${response}</div>
+                <div class="message-time">Just now</div>
+            </div>
+        `;
+        
+        chat.scrollTop = chat.scrollHeight;
+    }, 1000);
+    
+    chat.scrollTop = chat.scrollHeight;
 }
 
 // ==================== AGRO INPUTS TAB ====================
@@ -2417,7 +3091,6 @@ function loadAgroInputsTab() {
         </div>
     `;
 }
-
 // ==================== AGRO INPUTS FILTERING ====================
 function filterAgroProducts() {
     const searchTerm = document.getElementById('agroSearch')?.value.toLowerCase() || '';
@@ -2623,7 +3296,28 @@ function loadMessagesTab() {
     `;
 }
 
-// NEW: Helper functions
+function getUnreadMessageCount(conversation) {
+    if (!conversation.messages) return 0;
+    return conversation.messages.filter(msg => 
+        msg.senderId !== currentUser.id && !msg.read
+    ).length;
+}
+
+function formatMessageTime(timestamp) {
+    const messageTime = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - messageTime;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+    return messageTime.toLocaleDateString();
+}
+// Helper functions
 function getOtherUserFromConversation(conversation) {
     return conversation.user1Id === currentUser.id ? conversation.user2 : conversation.user1;
 }
@@ -2633,6 +3327,7 @@ function getUnreadMessageCount(conversation) {
         msg.senderId !== currentUser.id && !msg.read
     ).length;
 }
+
 function getConversationsWithLastMessages() {
     if (!currentUser) return [];
     
@@ -2675,67 +3370,6 @@ function formatMessageTime(timestamp) {
     if (diffDays < 7) return `${diffDays}d ago`;
     return messageTime.toLocaleDateString();
 }
-// ==================== PRODUCT SYNC NOTIFICATIONS ====================
-function notifyNewProducts() {
-    // This function is called when new products are added
-    if (currentTab !== 'feed') {
-        showNotification('New products available in the feed!', 'info');
-    }
-}
-
-// ==================== MODIFIED TAB MANAGEMENT ====================
-function switchTab(tabName) {
-    console.log('Switching to tab:', tabName);
-    
-    // Remove active class from all tab buttons
-    document.querySelectorAll('.tab-button').forEach(button => {
-        button.classList.remove('active');
-    });
-    
-    // Hide all tab contents
-    document.querySelectorAll('.tab-content').forEach(content => {
-        content.classList.add('hidden');
-    });
-    
-    // Add active class to clicked tab button
-    const activeButton = document.querySelector(`[onclick="switchTab('${tabName}')"]`);
-    if (activeButton) {
-        activeButton.classList.add('active');
-    }
-    
-    // Show the selected tab content
-    const activeTab = document.getElementById(tabName + 'Tab');
-    if (activeTab) {
-        activeTab.classList.remove('hidden');
-    }
-    
-    currentTab = tabName;
-    
-    // Load content for specific tabs
-    switch(tabName) {
-        case 'feed':
-            displayProducts(allProducts);
-            break;
-        case 'map':
-            setTimeout(() => initializeMap(), 100);
-            break;
-        case 'priceMonitoring':
-            setTimeout(() => initializePriceMonitoring(), 100);
-            break;
-        case 'profile':
-    		updateProfile();
-    		loadMyProducts();
-    		updateProfileStats(); // ADD THIS LINE
-    		break;
-        case 'agroInputs':
-            loadAgroInputsTab();
-            break;
-        case 'messages':
-            loadMessagesTab();
-            break;
-    }
-}
-
 
 // ==================== CHAT SYSTEM ====================
 function openChat(userId = null) {
@@ -2872,6 +3506,7 @@ function loadChatMessages() {
     
     chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
 }
+
 function handleChatKeyPress(event) {
     if (event.key === 'Enter') {
         sendChatMessage();
@@ -2912,7 +3547,7 @@ function sendChatMessage() {
     showNotification('Message sent!', 'success');
 }
 
-// NEW: Simulate message notification to other user
+// Simulate message notification to other user
 function simulateMessageNotification(receiverId, message) {
     // In a real app, this would be a push notification or WebSocket
     console.log(`Message sent to user ${receiverId}: ${message.message}`);
@@ -2925,6 +3560,63 @@ function simulateMessageNotification(receiverId, message) {
     });
     receiverConversation.updatedAt = new Date().toISOString();
     saveConversation(receiverConversation);
+}
+
+// Get all conversations for current user
+function getAllConversations() {
+    if (!currentUser) return [];
+    
+    const allConversations = Storage.get('allConversations', []);
+    return allConversations.filter(conv => 
+        conv.user1Id === currentUser.id || conv.user2Id === currentUser.id
+    );
+}
+
+// Save conversation to storage
+function saveConversation(conversation) {
+    const allConversations = Storage.get('allConversations', []);
+    const existingIndex = allConversations.findIndex(conv => conv.id === conversation.id);
+    
+    if (existingIndex !== -1) {
+        allConversations[existingIndex] = conversation;
+    } else {
+        allConversations.push(conversation);
+    }
+    
+    Storage.set('allConversations', allConversations);
+}
+
+// Get or create conversation between two users
+function getOrCreateConversation(user1Id, user2Id) {
+    const allConversations = Storage.get('allConversations', []);
+    
+    // Find existing conversation
+    let conversation = allConversations.find(conv => 
+        (conv.user1Id === user1Id && conv.user2Id === user2Id) ||
+        (conv.user1Id === user2Id && conv.user2Id === user1Id)
+    );
+    
+    if (!conversation) {
+        // Create new conversation
+        const user1 = allUsers.find(u => u.id === user1Id);
+        const user2 = allUsers.find(u => u.id === user2Id);
+        
+        conversation = {
+            id: `conv_${user1Id}_${user2Id}`,
+            user1Id,
+            user2Id,
+            user1,
+            user2,
+            messages: [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        
+        allConversations.push(conversation);
+        Storage.set('allConversations', allConversations);
+    }
+    
+    return conversation;
 }
 
 // ==================== EDIT PROFILE ====================
@@ -3851,45 +4543,88 @@ function closeModal() {
     }
 }
 
-// ==================== WEBSOCKET INITIALIZATION ====================
+// ==================== REAL-TIME SYSTEM (WebSocket Replacement) ====================
 function initializeWebSocket() {
     if (!currentUser) return;
     
-    try {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}`;
-        
-        ws = new WebSocket(`${wsUrl}?userId=${currentUser.id}`);
-        
-        ws.onopen = () => {
-            console.log('WebSocket connected');
-        };
-        
-        ws.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            handleWebSocketMessage(data);
-        };
-        
-        ws.onclose = () => {
-            console.log('WebSocket disconnected');
-        };
-        
-        ws.onerror = (error) => {
-            console.error('WebSocket error:', error);
-        };
-        
-    } catch (error) {
-        console.error('WebSocket initialization error:', error);
+    console.log('🔌 Starting real-time updates with polling');
+    
+    // Start polling for various updates
+    startPollingForUpdates();
+}
+
+function startPollingForUpdates() {
+    // Clear any existing intervals
+    if (window.pollingIntervals) {
+        window.pollingIntervals.forEach(clearInterval);
+    }
+    
+    window.pollingIntervals = [];
+    
+    // Check for new messages every 5 seconds
+    window.pollingIntervals.push(setInterval(() => {
+        if (currentUser) {
+            checkForNewMessages();
+        }
+    }, 5000));
+    
+    // Check for notifications every 10 seconds
+    window.pollingIntervals.push(setInterval(() => {
+        if (currentUser) {
+            checkForRandomNotifications();
+        }
+    }, 10000));
+    
+    // Check for new products every 15 seconds
+    window.pollingIntervals.push(setInterval(() => {
+        if (currentUser && currentTab === 'feed') {
+            checkForNewProducts();
+        }
+    }, 15000));
+}
+
+function checkForRandomNotifications() {
+    // Only show occasional notifications (10% chance)
+    if (Math.random() < 0.1) {
+        const notifications = [
+            { message: '🌱 New farming tips available! Check the Agro Inputs section.', type: 'info' },
+            { message: '📊 Market prices have been updated', type: 'info' },
+            { message: '👥 New farmers joined your area recently', type: 'info' },
+            { message: '🛒 Special offers available this week', type: 'success' },
+            { message: '💧 Remember to check your farm irrigation system', type: 'warning' }
+        ];
+        const randomNotification = notifications[Math.floor(Math.random() * notifications.length)];
+        showNotification(randomNotification.message, randomNotification.type);
+    }
+}
+
+function checkForNewProducts() {
+    // Simulate new products being added occasionally
+    if (Math.random() < 0.15 && allProducts.length > 0) { // 15% chance
+        const newProductCount = Math.floor(Math.random() * 2) + 1; // 1-2 new products
+        showNotification(`${newProductCount} new product${newProductCount > 1 ? 's' : ''} available in the marketplace!`, 'info');
     }
 }
 
 function handleWebSocketMessage(data) {
+    // This function is kept for compatibility but now uses polling
+    console.log('Simulated real-time update:', data);
+    
     switch (data.type) {
-        case 'online_users':
-            onlineUsers = new Set(data.users);
-            break;
         case 'new_message':
-            showNotification(`New message from ${getUserName(data.message.senderId)}`, 'info');
+            if (data.message && data.message.senderId !== currentUser.id) {
+                showNotification(`New message from ${getUserName(data.message.senderId)}`, 'info');
+            }
+            break;
+        case 'price_update':
+            if (currentTab === 'priceMonitoring') {
+                updatePriceChart();
+            }
+            break;
+        case 'new_product':
+            if (currentTab === 'feed') {
+                displayProducts(allProducts);
+            }
             break;
     }
 }
@@ -3899,107 +4634,21 @@ function getUserName(userId) {
     return user ? user.fullName : 'Unknown User';
 }
 
-// ==================== GLOBAL FUNCTION AVAILABILITY ====================
-// Make sure all functions are available in the global scope
-window.toggleNotificationWindow = toggleNotificationWindow;
-window.clearAllNotifications = clearAllNotifications;
-window.handleNotificationClick = handleNotificationClick;
-window.handleNotificationAction = handleNotificationAction;
+// Clean up polling when user logs out
+function cleanupPolling() {
+    if (window.pollingIntervals) {
+        window.pollingIntervals.forEach(clearInterval);
+        window.pollingIntervals = [];
+    }
+}
 
-// Authentication Functions
-window.debugProducts = debugProducts;
-window.login = login;
-window.signup = signup;
-window.showSignup = showSignup;
-window.showLogin = showLogin;
-window.selectUserType = selectUserType;
-window.logout = logout;
-
-// Navigation & Tabs
-window.switchTab = switchTab;
-window.openMyFarm = openMyFarm;
-
-// Chat Functions
-window.openChat = openChat;
-window.selectChatUser = selectChatUser;
-window.sendChatMessage = sendChatMessage;
-window.handleChatKeyPress = handleChatKeyPress;
-window.filterUsers = filterUsers;
-window.showUserSelectionModal = showUserSelectionModal;
-window.loadChatMessages = loadChatMessages;
-
-// Cart Functions
-window.addToCart = addToCart;
-window.showCart = showCart;
-window.removeFromCart = removeFromCart;
-window.updateCartQuantity = updateCartQuantity;
-window.checkout = checkout;
-
-// Profile Functions
-window.openEditProfile = openEditProfile;
-window.updateProfileInfo = updateProfileInfo;
-
-// Product Functions
-window.showAddProductForm = showAddProductForm;
-window.saveNewProduct = saveNewProduct;
-window.editProduct = editProduct;
-window.updateProduct = updateProduct;
-window.deleteProduct = deleteProduct;
-window.showProductDetails = showProductDetails;
-
-// Negotiate Functions
-window.openNegotiate = openNegotiate;
-window.submitNegotiation = submitNegotiation;
-
-// AI Features
-window.openPlantIdentification = openPlantIdentification;
-window.openDiseaseDetection = openDiseaseDetection;
-window.analyzePlant = analyzePlant;
-window.analyzeDisease = analyzeDisease;
-window.handleAIImageSelection = handleAIImageSelection;
-
-// Agro Inputs
-window.showStoreOptions = showStoreOptions;
-window.redirectToStore = redirectToStore;
-window.getStoreIcon = getStoreIcon;
-window.addToCartAgro = addToCartAgro;
-window.filterAgroProducts = filterAgroProducts;
-window.getAgroCategory = getAgroCategory;
-
-// Map Functions
-window.initializeMap = initializeMap;
-window.viewUserProducts = viewUserProducts;
-
-// Modal Functions
-window.closeModal = closeModal;
-window.createModal = createModal;
-
-// Utility Functions
-window.showNotification = showNotification;
-window.showLoading = showLoading;
-window.hideLoading = hideLoading;
-// Price Monitoring
-window.initializePriceMonitoring = initializePriceMonitoring;
-window.updatePriceChart = updatePriceChart;
-window.setPriceAlert = setPriceAlert;
-window.viewUserProfile = viewUserProfile;
-
+// Update the logout function to clean up polling
+const originalLogout = window.logout;
+window.logout = function() {
+    cleanupPolling();
+    originalLogout();
+};
 // ==================== REAL-TIME MESSAGING SYSTEM ====================
-function startRealTimePolling() {
-    setInterval(() => {
-        if (currentTab === 'messages' && currentChat) {
-            loadChatMessages(); // Refresh current chat
-        }
-        loadMessagesTab(); // Refresh conversations list
-    }, 3000); // Poll every 3 seconds
-}
-function initializeRealTimeMessaging() {
-    // Check for new messages every 2 seconds
-    setInterval(() => {
-        checkForNewMessages();
-    }, 2000);
-}
-
 function checkForNewMessages() {
     if (!currentUser) return;
     
@@ -4015,13 +4664,16 @@ function checkForNewMessages() {
         if (lastMessage && lastMessage.senderId !== currentUser.id && !lastMessage.read) {
             hasNewMessages = true;
             
-            // Mark as read
-            lastMessage.read = true;
-            saveConversation(conversation);
-            
-            // Show notification if not viewing this chat
-            if (currentTab !== 'messages' || currentChat?.id !== conversation.otherUser.id) {
-                showNotification(`💬 New message from ${conversation.otherUser.fullName}`, 'info');
+            // Mark as read when we detect them (simulating real-time)
+            if (!lastMessage.read) {
+                lastMessage.read = true;
+                saveConversation(conversation);
+                
+                // Show notification if not viewing this chat
+                if (currentTab !== 'messages' || currentChat?.id !== getOtherUserFromConversation(conversation).id) {
+                    const otherUser = getOtherUserFromConversation(conversation);
+                    showNotification(`💬 New message from ${otherUser.fullName}`, 'info');
+                }
             }
         }
     });
@@ -4029,10 +4681,15 @@ function checkForNewMessages() {
     // Update messages tab if active
     if (currentTab === 'messages') {
         loadMessagesTab();
+        if (currentChat) {
+            loadChatMessages();
+        }
     }
+    
+    return hasNewMessages;
 }
 
-// NEW: Get all conversations for current user
+// Also make sure these helper functions are available:
 function getAllConversations() {
     if (!currentUser) return [];
     
@@ -4042,7 +4699,10 @@ function getAllConversations() {
     );
 }
 
-// NEW: Save conversation to storage
+function getOtherUserFromConversation(conversation) {
+    return conversation.user1Id === currentUser.id ? conversation.user2 : conversation.user1;
+}
+
 function saveConversation(conversation) {
     const allConversations = Storage.get('allConversations', []);
     const existingIndex = allConversations.findIndex(conv => conv.id === conversation.id);
@@ -4054,39 +4714,6 @@ function saveConversation(conversation) {
     }
     
     Storage.set('allConversations', allConversations);
-}
-
-// NEW: Get or create conversation between two users
-function getOrCreateConversation(user1Id, user2Id) {
-    const allConversations = Storage.get('allConversations', []);
-    
-    // Find existing conversation
-    let conversation = allConversations.find(conv => 
-        (conv.user1Id === user1Id && conv.user2Id === user2Id) ||
-        (conv.user1Id === user2Id && conv.user2Id === user1Id)
-    );
-    
-    if (!conversation) {
-        // Create new conversation
-        const user1 = allUsers.find(u => u.id === user1Id);
-        const user2 = allUsers.find(u => u.id === user2Id);
-        
-        conversation = {
-            id: `conv_${user1Id}_${user2Id}`,
-            user1Id,
-            user2Id,
-            user1,
-            user2,
-            messages: [],
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString()
-        };
-        
-        allConversations.push(conversation);
-        Storage.set('allConversations', allConversations);
-    }
-    
-    return conversation;
 }
 // ==================== PRODUCT SYNC SYSTEM ====================
 function initializeProductSync() {
@@ -4110,19 +4737,7 @@ function syncNewProducts() {
     }
     
     Storage.set('lastProductSync', currentTime);
- if (newProducts.length > 0) {
-        addNotification(
-            'New Products Available',
-            `${newProducts.length} new products have been added to the marketplace`,
-            'new-product',
-            [
-                { type: 'view', label: 'View Feed' },
-                { type: 'dismiss', label: 'Dismiss' }
-            ]
-        );
-    }
 }
-
 
 // ==================== VIEW USER PRODUCTS FUNCTION ====================
 function viewUserProducts(userId) {
@@ -4177,6 +4792,7 @@ function viewUserProducts(userId) {
         `;
     }
 }
+
 // ==================== PRICE MONITORING SYSTEM ====================
 function initializePriceMonitoring() {
     // Wait a bit for the DOM to be fully ready
@@ -4201,6 +4817,7 @@ function initializePriceMonitoring() {
         }
     }, 100);
 }
+
 function updatePriceChart() {
     const ctx = document.getElementById('priceChart');
     if (!ctx) {
@@ -4275,6 +4892,7 @@ function updatePriceChart() {
         showNotification('Failed to load price chart', 'error');
     }
 }
+
 function generatePriceData(category, timeRange) {
     // Filter products by category
     const filteredProducts = category === 'all' 
@@ -4310,7 +4928,7 @@ function generatePriceData(category, timeRange) {
     };
 }
 
-// NEW FUNCTION: Get realistic price history based on actual products
+// Get realistic price history based on actual products
 function getPriceHistory(products, timeRange) {
     const currentAvg = products.reduce((sum, p) => sum + p.pricePerKg, 0) / products.length;
     const timeLabels = generateTimeLabels(timeRange);
@@ -4329,7 +4947,7 @@ function getPriceHistory(products, timeRange) {
     };
 }
 
-// NEW FUNCTION: Time-based price variations (more realistic)
+// Time-based price variations (more realistic)
 function getTimeBasedVariation(index, totalPoints) {
     // Prices tend to be higher in morning, lower in afternoon
     if (totalPoints === 8) { // 24-hour format
@@ -4342,12 +4960,13 @@ function getTimeBasedVariation(index, totalPoints) {
     return 0;
 }
 
-// NEW FUNCTION: Calculate actual price change
+// Calculate actual price change
 function calculatePriceChange(prices) {
     if (prices.length < 2) return 0;
     const change = ((prices[prices.length - 1] - prices[0]) / prices[0]) * 100;
     return Number(change.toFixed(1));
 }
+
 function generateTimeLabels(timeRange) {
     switch (timeRange) {
         case '24h':
@@ -4359,30 +4978,6 @@ function generateTimeLabels(timeRange) {
         default:
             return ['6AM', '12PM', '6PM'];
     }
-}
-
-function generatePriceVariations(basePrice, dataPoints) {
-    const prices = [];
-    let current = basePrice;
-    
-    for (let i = 0; i < dataPoints; i++) {
-        // Random variation between -5% and +5%
-        const variation = (Math.random() - 0.5) * 0.1;
-        current = basePrice * (1 + variation);
-        prices.push(Number(current.toFixed(2)));
-    }
-    
-    const high = Math.max(...prices);
-    const low = Math.min(...prices);
-    const change = ((prices[prices.length - 1] - prices[0]) / prices[0]) * 100;
-    
-    return {
-        prices,
-        current: prices[prices.length - 1],
-        change: Number(change.toFixed(1)),
-        high: Number(high.toFixed(2)),
-        low: Number(low.toFixed(2))
-    };
 }
 
 function updatePriceStats(priceData) {
@@ -4416,6 +5011,7 @@ function updatePriceStats(priceData) {
             : 'No Data';
     }
 }
+
 function getCategoryDisplayName(category) {
     const names = {
         'all': 'All Products',
@@ -4436,7 +5032,6 @@ function setPriceAlert() {
         return;
     }
     
-     
     const alerts = Storage.get('priceAlerts', []);
     
     // Check if alert already exists for this product
@@ -4466,11 +5061,6 @@ function setPriceAlert() {
     
     // Test the alert immediately
     setTimeout(() => checkPriceAlerts(), 1000);
-
-
-    
-    Storage.set('priceAlerts', alerts);
-    showNotification(`Price alert set for ${product} below ₱${price.toFixed(2)}`, 'success');
 }
 
 function checkPriceAlerts() {
@@ -4490,22 +5080,15 @@ function checkPriceAlerts() {
             const avgPrice = relevantProducts.reduce((sum, p) => sum + p.pricePerKg, 0) / relevantProducts.length;
             
             if (avgPrice <= alert.price) {
-                addNotification(
-            'Price Alert Triggered!',
-            `${alert.product} is now ₱${avgPrice.toFixed(2)} (below your alert of ₱${alert.price.toFixed(2)})`,
-'warning');
+                showNotification(`Price Alert! ${alert.product} is now ₱${avgPrice.toFixed(2)} (below your alert of ₱${alert.price.toFixed(2)})`, 'warning');
                 alert.active = false; // Disable alert after triggering
-'price-alert',
-            [
-                { type: 'view', label: 'View Prices' },
-                { type: 'dismiss', label: 'Dismiss' }
-            ]
             }
         }
     });
     
     Storage.set('priceAlerts', alerts);
 }
+
 // ==================== PROFILE STATS UPDATER ====================
 function updateProfileStats() {
     if (!currentUser) return;
@@ -4545,252 +5128,8 @@ function updateProfileStats() {
         reviews: totalReviews
     });
 }
-// ==================== NOTIFICATION SYSTEM ====================
-let notifications = Storage.get('notifications', []);
-let notificationWindowVisible = false;
 
-// Initialize notification system
-function initializeNotificationSystem() {
-    updateNotificationBadge();
-    
-    // Check for new notifications every 10 seconds
-    setInterval(() => {
-        checkForNotifications();
-    }, 10000);
-}
-
-// Toggle notification window
-function toggleNotificationWindow() {
-    const notificationWindow = document.getElementById('notificationWindow');
-    const notificationBadge = document.getElementById('notificationBadge');
-    
-    if (notificationWindowVisible) {
-        notificationWindow.classList.add('hidden');
-        notificationWindowVisible = false;
-    } else {
-        notificationWindow.classList.remove('hidden');
-        notificationWindowVisible = true;
-        
-        // Mark all as read when opening
-        markAllNotificationsAsRead();
-        
-        // Load notifications
-        loadNotificationWindow();
-    }
-}
-
-// Load notifications into the window
-function loadNotificationWindow() {
-    const notificationList = document.getElementById('notificationList');
-    if (!notificationList) return;
-    
-    if (notifications.length === 0) {
-        notificationList.innerHTML = `
-            <div class="notification-item">
-                <div class="notification-item-icon">📭</div>
-                <div class="notification-item-content">
-                    <div class="notification-item-title">No notifications</div>
-                    <div class="notification-item-message">You're all caught up!</div>
-                </div>
-            </div>
-        `;
-        return;
-    }
-    
-    // Sort by timestamp (newest first)
-    const sortedNotifications = [...notifications].sort((a, b) => 
-        new Date(b.timestamp) - new Date(a.timestamp)
-    );
-    
-    notificationList.innerHTML = sortedNotifications.map(notification => `
-        <div class="notification-item ${notification.read ? '' : 'unread'} ${notification.type ? 'notification-' + notification.type : ''}" 
-             onclick="handleNotificationClick('${notification.id}')">
-            <div class="notification-item-icon">${getNotificationIcon(notification.type)}</div>
-            <div class="notification-item-content">
-                <div class="notification-item-title">${notification.title}</div>
-                <div class="notification-item-message">${notification.message}</div>
-                <div class="notification-item-time">${formatNotificationTime(notification.timestamp)}</div>
-                ${notification.actions ? `
-                    <div class="notification-item-actions">
-                        ${notification.actions.map(action => `
-                            <button class="btn-small" onclick="event.stopPropagation(); handleNotificationAction('${notification.id}', '${action.type}')">
-                                ${action.label}
-                            </button>
-                        `).join('')}
-                    </div>
-                ` : ''}
-            </div>
-        </div>
-    `).join('');
-}
-
-// Add a new notification
-function addNotification(title, message, type = 'system', actions = []) {
-    const newNotification = {
-        id: 'notif_' + Date.now(),
-        title,
-        message,
-        type,
-        read: false,
-        timestamp: new Date().toISOString(),
-        actions
-    };
-    
-    notifications.unshift(newNotification); // Add to beginning
-    
-    // Keep only last 50 notifications
-    if (notifications.length > 50) {
-        notifications = notifications.slice(0, 50);
-    }
-    
-    Storage.set('notifications', notifications);
-    updateNotificationBadge();
-    
-    // Show popup notification if window is closed
-    if (!notificationWindowVisible) {
-        showPopupNotification(newNotification);
-    }
-    
-    // Reload notification window if it's open
-    if (notificationWindowVisible) {
-        loadNotificationWindow();
-    }
-    
-    console.log('Notification added:', newNotification);
-}
-
-// Show popup notification (like toast)
-function showPopupNotification(notification) {
-    const popup = document.createElement('div');
-    popup.className = `notification-popup ${notification.type}`;
-    popup.innerHTML = `
-        <div class="notification-popup-content">
-            <div class="notification-popup-icon">${getNotificationIcon(notification.type)}</div>
-            <div>
-                <strong>${notification.title}</strong>
-                <p>${notification.message}</p>
-            </div>
-            <button onclick="this.parentElement.parentElement.remove()">
-                <i class="fas fa-times"></i>
-            </button>
-        </div>
-    `;
-    
-    document.body.appendChild(popup);
-    
-    // Auto remove after 5 seconds
-    setTimeout(() => {
-        if (popup.parentElement) {
-            popup.remove();
-        }
-    }, 5000);
-}
-
-// Update notification badge count
-function updateNotificationBadge() {
-    const badge = document.getElementById('notificationBadge');
-    if (!badge) return;
-    
-    const unreadCount = notifications.filter(n => !n.read).length;
-    
-    if (unreadCount > 0) {
-        badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
-        badge.style.display = 'flex';
-    } else {
-        badge.style.display = 'none';
-    }
-}
-
-// Mark all notifications as read
-function markAllNotificationsAsRead() {
-    let updated = false;
-    
-    notifications.forEach(notification => {
-        if (!notification.read) {
-            notification.read = true;
-            updated = true;
-        }
-    });
-    
-    if (updated) {
-        Storage.set('notifications', notifications);
-        updateNotificationBadge();
-        loadNotificationWindow();
-    }
-}
-
-// Clear all notifications
-function clearAllNotifications() {
-    if (notifications.length === 0) return;
-    
-    if (confirm('Clear all notifications?')) {
-        notifications = [];
-        Storage.set('notifications', notifications);
-        updateNotificationBadge();
-        loadNotificationWindow();
-        showNotification('All notifications cleared', 'success');
-    }
-}
-
-// Handle notification click
-function handleNotificationClick(notificationId) {
-    const notification = notifications.find(n => n.id === notificationId);
-    if (!notification) return;
-    
-    // Mark as read
-    notification.read = true;
-    Storage.set('notifications', notifications);
-    updateNotificationBadge();
-    loadNotificationWindow();
-    
-    // Handle different notification types
-    switch (notification.type) {
-        case 'message':
-            // Open messages tab and select the user
-            if (notification.userId) {
-                switchTab('messages');
-                selectChatUser(notification.userId);
-            }
-            break;
-        case 'price-alert':
-            // Open price monitoring tab
-            switchTab('priceMonitoring');
-            break;
-        case 'new-product':
-            // Open feed tab
-            switchTab('feed');
-            break;
-    }
-    
-    // Close notification window after click
-    toggleNotificationWindow();
-}
-
-// Handle notification actions
-function handleNotificationAction(notificationId, actionType) {
-    const notification = notifications.find(n => n.id === notificationId);
-    if (!notification) return;
-    
-    switch (actionType) {
-        case 'view':
-            handleNotificationClick(notificationId);
-            break;
-        case 'dismiss':
-            notifications = notifications.filter(n => n.id !== notificationId);
-            Storage.set('notifications', notifications);
-            updateNotificationBadge();
-            loadNotificationWindow();
-            break;
-    }
-}
 // ==================== SMART FARM SYSTEM ====================
-let soilMoistureChart = null;
-let farmDataInterval = null;
-let autoIrrigationEnabled = false;
-let moistureThreshold = 30;
-let isESP32Connected = false;
-
-// Initialize farm system
 function initializeFarmSystem() {
     console.log('🌱 Initializing farm system...');
     loadFarmData();
@@ -5174,72 +5513,191 @@ function displayWeatherData(weather) {
     `;
 }
 
-// Update the switchTab function to initialize farm when opened
-const originalSwitchTab = window.switchTab;
-window.switchTab = function(tabName) {
-    originalSwitchTab(tabName);
-    
-    if (tabName === 'myFarm') {
-        console.log('🌱 My Farm tab opened - initializing farm system');
-        setTimeout(() => {
-            initializeFarmSystem();
-        }, 100);
-    }
-};
-// ==================== INITIALIZATION ====================
+// ==================== GLOBAL FUNCTION AVAILABILITY ====================
+// Make sure all functions are available in the global scope
+window.switchTab = switchTab;
+window.selectPaymentMethod = selectPaymentMethod;
+window.setTopupAmount = setTopupAmount;
+window.processTopup = processTopup;
+window.openFAQ = openFAQ;
+window.openContactForm = openContactForm;
+window.openBugReport = openBugReport;
+window.openFeatureRequest = openFeatureRequest;
+window.sendSupportMessage = sendSupportMessage;
+window.submitContactForm = submitContactForm;
+window.submitBugReport = submitBugReport;
+window.submitFeatureRequest = submitFeatureRequest;
 
+// Authentication Functions
+window.debugProducts = debugProducts;
+window.login = login;
+window.signup = signup;
+window.showSignup = showSignup;
+window.showLogin = showLogin;
+window.selectUserType = selectUserType;
+window.logout = logout;
+
+// Navigation & Tabs
+window.openMyFarm = openMyFarm;
+
+// Chat Functions
+window.openChat = openChat;
+window.selectChatUser = selectChatUser;
+window.sendChatMessage = sendChatMessage;
+window.handleChatKeyPress = handleChatKeyPress;
+window.filterUsers = filterUsers;
+window.showUserSelectionModal = showUserSelectionModal;
+window.loadChatMessages = loadChatMessages;
+
+// Cart Functions
+window.addToCart = addToCart;
+window.showCart = showCart;
+window.removeFromCart = removeFromCart;
+window.updateCartQuantity = updateCartQuantity;
+window.checkout = checkout;
+
+// Profile Functions
+window.openEditProfile = openEditProfile;
+window.updateProfileInfo = updateProfileInfo;
+
+// Product Functions
+window.showAddProductForm = showAddProductForm;
+window.saveNewProduct = saveNewProduct;
+window.editProduct = editProduct;
+window.updateProduct = updateProduct;
+window.deleteProduct = deleteProduct;
+window.showProductDetails = showProductDetails;
+
+// Negotiate Functions
+window.openNegotiate = openNegotiate;
+window.submitNegotiation = submitNegotiation;
+
+// AI Features
+window.openPlantIdentification = openPlantIdentification;
+window.openDiseaseDetection = openDiseaseDetection;
+window.analyzePlant = analyzePlant;
+window.analyzeDisease = analyzeDisease;
+window.handleAIImageSelection = handleAIImageSelection;
+
+// Agro Inputs
+window.showStoreOptions = showStoreOptions;
+window.redirectToStore = redirectToStore;
+window.getStoreIcon = getStoreIcon;
+window.addToCartAgro = addToCartAgro;
+window.filterAgroProducts = filterAgroProducts;
+window.getAgroCategory = getAgroCategory;
+
+// Map Functions
+window.initializeMap = initializeMap;
+window.viewUserProducts = viewUserProducts;
+window.viewUserProfile = viewUserProfile;
+
+// Modal Functions
+window.closeModal = closeModal;
+window.createModal = createModal;
+
+// Utility Functions
+window.showNotification = showNotification;
+window.showLoading = showLoading;
+window.hideLoading = hideLoading;
+
+// Price Monitoring
+window.initializePriceMonitoring = initializePriceMonitoring;
+window.updatePriceChart = updatePriceChart;
+window.setPriceAlert = setPriceAlert;
+
+// Farm Functions
+window.toggleAutoIrrigation = toggleAutoIrrigation;
+window.updateThreshold = updateThreshold;
+window.manualIrrigation = manualIrrigation;
+window.addSensorSlot = addSensorSlot;
+
+// ==================== INITIALIZATION ====================
 document.addEventListener('DOMContentLoaded', function() {
     console.log('SmartXCrop App Initialized');
 
-// Add dynamic styles
-addDynamicStyles();
+    // Add dynamic styles
+    addDynamicStyles();
 
-// Check authentication
-const savedUser = Storage.get('currentUser');
-const savedToken = Storage.get('authToken');
+    // Check authentication
+    const savedUser = Storage.get('currentUser');
+    const savedToken = Storage.get('authToken');
 
-if (savedUser && savedToken) {
-    currentUser = savedUser;
-    authToken = savedToken;
-    
-    // Initialize demo data if no products exist
-    if (Storage.get('allProducts', []).length === 0) {
-        loadDemoData();
+    if (savedUser && savedToken) {
+        currentUser = savedUser;
+        authToken = savedToken;
+        
+        // Initialize wallet system
+        initializeWalletSystem();
+        
+        // Initialize demo data if no products exist
+        if (Storage.get('allProducts', []).length === 0) {
+            loadDemoData();
+        }
+        
+        loadAppData();
+        initializeWebSocket();
+        document.getElementById('authScreen').classList.add('hidden');
+        document.getElementById('appScreen').classList.remove('hidden');
+    } else {
+        loadAppData();
+        document.getElementById('authScreen').classList.remove('hidden');
+        document.getElementById('appScreen').classList.add('hidden');
+        loadDemoData(); // Initialize demo data for signup
     }
-    
-    loadAppData();
-    initializeWebSocket();
-    document.getElementById('authScreen').classList.add('hidden');
-    document.getElementById('appScreen').classList.remove('hidden');
-} else {
- loadAppData();
-    document.getElementById('authScreen').classList.remove('hidden');
-    document.getElementById('appScreen').classlassList.add('hidden');
-    loadDemoData(); // Initialize demo data for signup
-}
 
+    // Initialize with feed tab
+    switchTab('feed');
 
-// Initialize with feed tab
-switchTab('feed');
-
-console.log('✅ All features initialized successfully');
+    console.log('✅ All features initialized successfully');
 });
-//==================== ADDITIONAL CSS FOR NEW FEATURES ====================
+// Add connection status monitoring
+function initializeConnectionMonitor() {
+    // Monitor online/offline status
+    window.addEventListener('online', () => {
+        showNotification('Connection restored', 'success');
+        // Try to sync data when coming back online
+        loadAppData();
+    });
+    
+    window.addEventListener('offline', () => {
+        showNotification('You are currently offline. Using local data.', 'warning');
+    });
+    
+    // Initial check
+    if (!navigator.onLine) {
+        showNotification('You are currently offline. Using local data.', 'info');
+    }
+}
+// ==================== ADDITIONAL CSS FOR NEW FEATURES ====================
 function addDynamicStyles() {
     const style = document.createElement('style');
     style.textContent = `
-        .unread-badge {
-            width: 12px;
-            height: 12px;
+          .unread-badge {
             background: #e74c3c;
+            color: white;
             border-radius: 50%;
-            position: absolute;
-            top: 10px;
-            right: 10px;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: bold;
         }
-        
-        .conversation-item {
+             .conversation-item:hover {
+            background: var(--light-gray);
+        }
+         .conversation-item {
             position: relative;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            background: var(--white);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background 0.3s;
         }
         
         .product-preview {
@@ -5255,7 +5713,6 @@ function addDynamicStyles() {
             padding: 40px 20px;
             color: var(--medium-gray);
         }
-        
         .price-alerts {
             background: var(--white);
             padding: 20px;
@@ -5271,9 +5728,33 @@ function addDynamicStyles() {
             align-items: end;
         }
         
+        .cart-summary {
+            padding: 15px;
+            border-top: 1px solid var(--medium-gray);
+        }
+        
+        .wallet-balance-check {
+            margin-top: 10px;
+            padding: 10px;
+            background: var(--light-gray);
+            border-radius: 5px;
+        }
+        
         @media (max-width: 768px) {
             .alert-settings {
                 grid-template-columns: 1fr;
+            }
+            
+            .amount-options {
+                grid-template-columns: 1fr;
+            }
+            
+            .balance-amount {
+                font-size: 36px;
+            }
+            
+            .payment-method {
+                padding: 15px;
             }
         }
     `;
